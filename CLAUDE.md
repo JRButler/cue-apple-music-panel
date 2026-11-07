@@ -103,16 +103,58 @@ The target uses a file-system-synchronised group, so a new `.swift` file under
   triggers the prompt.
 
 ### 3.2 MusicEventSource
-- Observe the `com.apple.Music.playerInfo` distributed notification. It fires on track change and on play, pause, or stop.
-  - Register with `suspensionBehavior: .deliverImmediately`. Without it macOS
-    queues distributed notifications for an app that is not active, which for an
-    `LSUIElement` agent is almost always — the panel would update only when
-    something else brought it forward.
-  - Use the selector-based observer APIs. The block-based ones want a `@Sendable`
-    closure, which `Notification` is not, so they fight strict concurrency for no
-    gain here.
-  - In M0, **log the full `userInfo` payload** and document the real keys here. The expected keys (Name, Artist, Album, Total Time, Player State, Persistent ID) are unverified on macOS 27.
-- Observe `NSWorkspace` `didLaunchApplicationNotification` and `didTerminateApplicationNotification`, filtered to `com.apple.Music`.
+
+Observe the `com.apple.Music.playerInfo` distributed notification. **Verified on
+macOS 27.0.1**: it fires on track change and on play, pause and stop, and the
+payload is below.
+
+- **Register with an explicit name.** `addObserver(forName: nil, …)` never fires
+  on a `DistributedNotificationCenter` — distributed delivery is routed by name,
+  so a wildcard matches nothing, and it fails *silently* rather than erroring.
+  That looks exactly like "Music posts nothing at all", and cost time in M0.
+  There is no supported way to enumerate what a process posts. A controlled test
+  confirmed the failure is contained: a nil-name registration does not disturb
+  other registrations on the same observer object, and both the block-based and
+  selector-based APIs deliver correctly.
+- We use the block-based API with `queue: .main`, and convert to a `Sendable`
+  `PlayerInfoPayload` at that boundary, which keeps `Notification` — not
+  `Sendable` — from crossing into the main actor. The selector-based API works
+  equally well; this is a concurrency-ergonomics choice, not a correctness one.
+- `suspensionBehavior: .deliverImmediately` matters for the selector-based API,
+  so that macOS does not queue notifications while the agent is inactive — which
+  for an `LSUIElement` app is nearly always.
+- Music **also** posts `com.apple.iTunes.playerInfo` with a byte-identical
+  payload. Observe only one, or every change is handled twice.
+
+**The payload, as actually delivered** (9 keys):
+
+| key | type | notes |
+|---|---|---|
+| `Name` | String | track title |
+| `Artist` | String | |
+| `Album` | String | |
+| `Genre` | String | not in the original spec's expected set |
+| `Composer` | String | not in the original spec's expected set |
+| `Player State` | String | `Playing` / `Paused` |
+| `Total Time` | Int | **milliseconds**, and rounded to the second |
+| `PersistentID` | Int | **signed** 64-bit decimal |
+| `Library PersistentID` | Int | signed; identifies the library, not the track |
+
+Two conversions are needed, and `PlayerInfoPayload` does both:
+
+- **`PersistentID` is a signed decimal; AppleScript's `persistent ID` is a
+  16-digit uppercase hex string.** They are the same number:
+  `UInt64(bitPattern:)` then `%016llX`. Verified against the same track from both
+  sources — decimal `1061950922838147007` is `0EBCCEBCE4AA7FBF`. Without this,
+  §4.3's artwork cache would never get a key hit between the two paths.
+- **`Total Time` is milliseconds, `duration` is seconds** — and `Total Time` is
+  the rounder of the two (`353000` ms against a true `353.05` s). Use
+  AppleScript's `duration` for §4.2's scrub bar; treat `Total Time` as a hint.
+
+There is **no position field** in the payload, which is why position must still
+be polled (§3.3, §7.1).
+
+- Observe `NSWorkspace` `didLaunchApplicationNotification` and `didTerminateApplicationNotification`, filtered to `com.apple.Music`. These are an ordinary notification centre, so selectors are fine.
 - On any event, ask `PlayerModel` to resync.
 
 ### 3.3 PlayerModel and PlaybackClock
@@ -346,15 +388,32 @@ Polling everything at 1 Hz costs 93 ms of blocked main thread every second. Even
 the reduced 8.3 ms is a dropped frame at 120 Hz, once a second, under a scrub bar
 that is supposed to animate at refresh rate. Options are in §7.
 
+**Notification payload — settled.** `com.apple.Music.playerInfo` is alive and
+correct on macOS 27.0.1. The real keys, the millisecond/second mismatch and the
+signed-decimal/hex persistent ID are all in §3.2. `Genre` and `Composer` arrive
+too, which the original expected set did not list, and there is no position field.
+
+**Track changes are logged within 200 ms — met.** Worst observed
+notification-to-state-logged interval: **82.5 ms** over several runs (91.9 ms on
+an earlier one). Note this is dominated by the ~90 ms `fetchState()` resync it
+triggers, so the §7.1 fix improves this figure too.
+
+**A `nil` notification name fails silently.** `addObserver(forName: nil, …)` on a
+`DistributedNotificationCenter` never fires. Worse, I then reported *that*
+observer's counter instead of the real one, and concluded Music had stopped
+broadcasting entirely on macOS 27 — which a standalone listener immediately
+disproved. Two lessons, both cheap to apply: register explicit names, and when a
+diagnostic says a system feature is gone, verify it from outside the code under
+test before believing it.
+
 **Still to record:**
 
-- [ ] The real `com.apple.Music.playerInfo` `userInfo` keys. The expected set
-      (Name, Artist, Album, Total Time, Player State, Persistent ID) is still
-      unverified on macOS 27; `tools/run-probe.sh --listen 30` surveys and prints
-      whatever actually arrives.
-- [ ] Worst notification-to-logged interval, against the 200 ms criterion.
 - [ ] The §3.1 guard exercised with Music closed (the probe skips this check while
       Music is running, since the guard cannot be tested against a running app).
+- [ ] The denied-permission path. Detection is proven for `notDetermined` (-1744)
+      and `musicNotRunning` (-600), which share the mapping machinery, but a real
+      "Don't Allow" has not been exercised. Needs a `tccutil reset AppleEvents
+      nz.slstudio.Cue` and a deliberate refusal, then a re-grant.
 
 ### M1 — Panel and scrub bar
 - Build the floating panel (§4.1) and the full scrub bar (§4.2).

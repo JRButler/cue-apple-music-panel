@@ -192,6 +192,77 @@ final class M0Probe {
         printVerdict()
     }
 
+    /// Settles §3.2 without needing anyone at the keyboard.
+    ///
+    /// A listen-only run cannot tell "the notification name is wrong" from
+    /// "nothing happened in Music", so this drives a real track change with the
+    /// M0 commands and then restores the position.
+    func runWatch() async {
+        heading("playerInfo discovery (§3.2)")
+
+        guard controller.bridge.isMusicRunning else {
+            fail("Music is not running")
+            printVerdict()
+            return
+        }
+
+        await controller.resync(reason: "watch baseline")
+        guard let baseline = controller.lastState else {
+            fail("could not read a baseline state")
+            printVerdict()
+            return
+        }
+
+        let originalPosition = baseline.position
+        emit("  Baseline: \(baseline.playerState.rawValue), \"\(baseline.track?.name ?? "(none)")\""
+            + (originalPosition.map { String(format: ", %.2f s", $0) } ?? ""))
+        if baseline.playerState == .playing {
+            note("Music is playing, so the track change will be audible.")
+        }
+
+        let countBefore = controller.playerInfoCount
+        emit("")
+        emit("  Triggering: next track →  wait  →  previous track")
+
+        await controller.next()
+        try? await Task.sleep(for: .seconds(2))
+        await controller.previous()
+        try? await Task.sleep(for: .seconds(2))
+
+        if let originalPosition, baseline.track != nil {
+            await controller.seek(to: originalPosition)
+            emit(String(format: "  Restored position to %.2f s", originalPosition))
+        }
+
+        heading("Delivery")
+        let delivered = controller.playerInfoCount - countBefore
+        if delivered == 0 {
+            fail("no playerInfo delivered during a real track change")
+        } else {
+            pass("\(delivered) notification(s) delivered via the block-based observer")
+        }
+
+        if !controller.observedPayloadKeys.isEmpty {
+            heading("Payload keys (§3.2)")
+            for key in controller.observedPayloadKeys { emit("  \(key)") }
+        }
+
+        if let payload = controller.lastPayload {
+            heading("Last payload, normalised")
+            for line in payload.fullDescription.split(separator: "\n", omittingEmptySubsequences: false) {
+                emit("  \(line)")
+            }
+        }
+
+        if let worst = controller.worstResyncMS {
+            heading("M0's 200 ms criterion")
+            let line = String(format: "worst notification → state logged: %.1f ms", worst)
+            worst <= 200 ? pass(line) : fail(line + " (over 200 ms)")
+        }
+
+        printVerdict()
+    }
+
     // MARK: - Checks
 
     private func checkScriptsCompiled() async {

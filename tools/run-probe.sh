@@ -15,6 +15,7 @@
 # Usage: tools/run-probe.sh [--listen <seconds>] [--samples <n>]
 #        tools/run-probe.sh --grant      # one-time: raise the prompt and wait
 #        tools/run-probe.sh --bench [--samples <n>]   # compare fetchState variants
+#        tools/run-probe.sh --watch      # trigger a track change, report notifications
 
 set -e
 cd "${0:a:h}/.."
@@ -37,7 +38,7 @@ echo
 
 # -n forces a fresh instance, -W waits for it to exit.
 # --grant is its own mode; everything else runs the probe sequence.
-if [[ " $* " == *" --grant "* || " $* " == *" --bench "* ]]; then
+if [[ " $* " == *" --grant "* || " $* " == *" --bench "* || " $* " == *" --watch "* ]]; then
   open -n -W -a "$APP" --args "$@"
 else
   open -n -W -a "$APP" --args --probe "$@"

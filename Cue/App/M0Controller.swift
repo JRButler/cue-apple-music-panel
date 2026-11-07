@@ -37,6 +37,7 @@ final class M0Controller {
     var worstResyncMS: Double?
     var playerInfoCount: Int { events.playerInfoCount }
     var observedPayloadKeys: [String] { events.observedPlayerInfoKeys.sorted() }
+    var lastPayload: PlayerInfoPayload?
 
     init(log: EventLog = EventLog(), bridge: MusicBridge = MusicBridge(), events: MusicEventSource = MusicEventSource()) {
         self.log = log
@@ -60,8 +61,8 @@ final class M0Controller {
         }
 
         events.start(handlers: .init(
-            playerInfo: { [weak self] notification in
-                self?.handlePlayerInfo(notification)
+            playerInfo: { [weak self] payload in
+                self?.handlePlayerInfo(payload)
             },
             musicLaunched: { [weak self] in
                 guard let self else { return }
@@ -98,12 +99,13 @@ final class M0Controller {
 
     // MARK: - Notifications
 
-    private func handlePlayerInfo(_ notification: Notification) {
+    private func handlePlayerInfo(_ payload: PlayerInfoPayload) {
         let arrived = ContinuousClock.now
+        lastPayload = payload
         log.appendBlock(
             .notification,
             title: "playerInfo #\(events.playerInfoCount) received",
-            body: MusicEventSource.describePayload(notification)
+            body: payload.fullDescription
         )
         Task { await resync(reason: "playerInfo", since: arrived) }
     }
@@ -164,6 +166,13 @@ final class M0Controller {
             await resync(reason: label)
         } catch {
             handle(error, while: label)
+        }
+    }
+
+    /// Absolute seek, for restoring state after a diagnostic.
+    func seek(to position: TimeInterval) async {
+        await command(String(format: "seek to %.2f s", position)) {
+            try await self.bridge.seek(to: position)
         }
     }
 

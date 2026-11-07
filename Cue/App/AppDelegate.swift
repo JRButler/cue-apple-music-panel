@@ -6,6 +6,7 @@
 //    (no arguments)  status item + debug window, for watching events live
 //    --grant         raise the Automation prompt and wait for an answer, then exit
 //    --bench         time fetchState variants against each other, then exit
+//    --watch         trigger a track change and report every notification seen
 //    --probe         run the M0 measurement sequence to stdout, then exit
 //
 //  The probe exists so M0's acceptance criteria can be checked from a shell and
@@ -36,6 +37,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task {
                 let probe = M0Probe(controller: controller, options: options)
                 await probe.runBenchmark()
+                exit(probe.exitCode)
+            }
+            return
+        }
+
+        if options.isWatch {
+            Task {
+                let probe = M0Probe(controller: controller, options: options)
+                await probe.runWatch()
                 exit(probe.exitCode)
             }
             return
@@ -78,6 +88,8 @@ struct LaunchOptions: Sendable {
     var isGrant = false
     /// Times fetchState variants against each other.
     var isBench = false
+    /// Triggers a real track change and reports every notification it produces.
+    var isWatch = false
     /// Seconds to keep listening for `playerInfo` after the probe's fixed
     /// sequence, so a track change can be caught and timed.
     var listenSeconds: Int = 0
@@ -93,6 +105,8 @@ struct LaunchOptions: Sendable {
                 isGrant = true
             case "--bench":
                 isBench = true
+            case "--watch":
+                isWatch = true
             case "--listen":
                 if let value = iterator.next(), let seconds = Int(value) { listenSeconds = seconds }
             case "--samples":
