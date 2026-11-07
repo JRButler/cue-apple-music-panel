@@ -193,7 +193,7 @@ final class M0Probe {
 
         // The decisive comparison: does collapsing references collapse the time?
         if let current = results.first(where: { $0.0.name == "ten-references" }),
-           let candidate = results.first(where: { $0.0.name == "POLL-position-only" }) {
+           let candidate = results.first(where: { $0.0.name == "SHIPPED-poll" }) {
             heading("Verdict on the hypothesis")
             let factor = current.1.medianMS / max(candidate.1.medianMS, 0.001)
             emit(String(format: "  today, polled at 1 Hz (10 references):  %.1f ms median", current.1.medianMS))
@@ -277,6 +277,106 @@ final class M0Probe {
             worst <= 200 ? pass(line) : fail(line + " (over 200 ms)")
         }
 
+        printVerdict()
+    }
+
+    /// Prints the full structure of Music's `properties` records: every keyword,
+    /// its descriptor type, and its value. The parser in MusicBridge is written
+    /// against this output rather than against assumptions.
+    func runDumpRecords() async {
+        heading("properties record structure")
+
+        guard controller.bridge.isMusicRunning else {
+            fail("Music is not running")
+            printVerdict()
+            return
+        }
+
+        let sources: [(String, String)] = [
+            ("application", """
+            with timeout of 5 seconds
+                tell application id "com.apple.Music" to return properties
+            end timeout
+            """),
+            ("current track", """
+            with timeout of 5 seconds
+                tell application id "com.apple.Music" to return properties of current track
+            end timeout
+            """),
+        ]
+
+        for (label, source) in sources {
+            heading("properties of \(label)")
+            do {
+                let descriptor = try controller.bridge.rawDescriptor(source: source)
+                emit("  descriptorType: \(AEKeyword(descriptor.descriptorType).fourCharText)"
+                    + "   fields: \(descriptor.numberOfItems)")
+                emit("")
+                emit(String(format: "  %-6@ %-10@ %@", "code" as NSString, "type" as NSString, "value" as NSString))
+                emit("  " + String(repeating: "─", count: 70))
+
+                guard descriptor.numberOfItems > 0 else {
+                    fail("\(label) returned no fields — is a track loaded?")
+                    continue
+                }
+
+                for index in 1 ... descriptor.numberOfItems {
+                    let keyword = descriptor.keywordForDescriptor(at: index)
+                    guard let field = descriptor.forKeyword(keyword) else { continue }
+                    let type = AEKeyword(field.descriptorType).fourCharText
+                    emit(String(format: "  %-6@ %-10@ %@",
+                                AEKeyword(keyword).fourCharText as NSString,
+                                type as NSString,
+                                Self.render(field) as NSString))
+                }
+            } catch {
+                fail("\(label): \((error as? MusicBridgeError)?.localizedDescription ?? "\(error)")")
+            }
+        }
+
+        printVerdict()
+    }
+
+    /// Renders a field whichever way its descriptor type suggests, so the output
+    /// shows which accessor the parser should use.
+    private static func render(_ field: NSAppleEventDescriptor) -> String {
+        let type = AEKeyword(field.descriptorType).fourCharText
+        switch type {
+        case "enum", "type":
+            return "\(AEKeyword(field.enumCodeValue).fourCharText)  (enumCodeValue)"
+        case "utxt", "TEXT":
+            let text = field.stringValue ?? "<nil>"
+            return "\"\(text.count > 60 ? String(text.prefix(60)) + "…" : text)\""
+        case "doub", "sing":
+            return String(format: "%.4f  (doubleValue)", field.doubleValue)
+        case "long", "shor", "comp", "magn":
+            return "\(field.int32Value)  (int32Value)"
+        case "bool", "true", "fals":
+            return "\(field.booleanValue)  (booleanValue)"
+        case "msng":
+            return "missing value"
+        case "obj ", "reco", "list":
+            return "<\(type), \(field.numberOfItems) item(s)>"
+        default:
+            if let text = field.stringValue { return "\"\(text)\"  (stringValue)" }
+            return "<\(type)>"
+        }
+    }
+
+    /// PlaybackClock's numeric checks. Pure arithmetic — no Music, no permission.
+    func runClockTests() {
+        heading("PlaybackClock (§3.3, §4.2)")
+
+        let results = M1ClockTests.runAll()
+        for result in results {
+            if result.passed {
+                pass("\(result.name) — \(result.detail)")
+            } else {
+                fail("\(result.name) — \(result.detail)")
+            }
+        }
+        emit("")
+        emit("  \(results.filter(\.passed).count)/\(results.count) passed")
         printVerdict()
     }
 

@@ -106,66 +106,134 @@ final class MusicBridge {
 
     // MARK: - Reads
 
-    /// Field order of `MusicScript.fetchState`'s returned list. Must stay in step
-    /// with the `return {...}` line in that script.
-    private enum StateField: Int, CaseIterable {
-        case playerState = 1
-        case position
-        case volume
-        case shuffle
-        case repeatMode
-        case persistentID
-        case name
-        case artist
-        case album
-        case duration
+    // MARK: - Record keys
+    //
+    // Four-char codes from the macOS 27.0.1 scripting definition, built from
+    // their text form rather than hex so a typo cannot pass silently.
+    //
+    // Note `pnam` appears in BOTH records: in the application record it is the
+    // app's own name ("Music"), in the track record it is the track title.
+    // Always read it from the right one.
+
+    private enum AppKey {
+        static let playerState = AEKeyword(fourChar: "pPlS")
+        static let volume = AEKeyword(fourChar: "pVol")
+        static let mute = AEKeyword(fourChar: "pMut")
+        static let shuffleEnabled = AEKeyword(fourChar: "pShE")
+        static let songRepeat = AEKeyword(fourChar: "pRpt")
     }
 
-    /// One batched sample of everything the panel polls (§3.1).
+    private enum TrackKey {
+        static let name = AEKeyword(fourChar: "pnam")
+        static let artist = AEKeyword(fourChar: "pArt")
+        static let album = AEKeyword(fourChar: "pAlb")
+        static let duration = AEKeyword(fourChar: "pDur")
+        static let persistentID = AEKeyword(fourChar: "pPIS")
+        static let favorited = AEKeyword(fourChar: "pLov")
+    }
+
+    /// `missing value`, which is how Music reports a genuinely absent field.
+    private static let missingValueType = AEKeyword(fourChar: "msng")
+
+    // MARK: - Reads
+
+    /// §3.3's 1 Hz hot path. One reference, one Apple Event, ~8.3 ms.
+    ///
+    /// Returns nil when Music reports no position, which it does while stopped.
+    /// Keep this method trivial: every field added here is another ~8.3 ms on
+    /// the main thread, every second.
+    func fetchPosition() async throws -> TimeInterval? {
+        let descriptor = try run(.fetchPosition)
+        let value = descriptor.doubleValue
+        return value >= 0 ? value : nil
+    }
+
+    /// §3.3's full sync. Three references (~25 ms), driven by notifications and
+    /// explicit user action, never by the 1 Hz timer.
     func fetchState() async throws -> MusicState {
         let list = try run(.fetchState)
 
-        guard list.numberOfItems == StateField.allCases.count else {
+        guard list.numberOfItems == 3 else {
             throw MusicBridgeError.malformedResult(
-                "fetchState returned \(list.numberOfItems) fields, expected \(StateField.allCases.count)"
+                "fetchState returned \(list.numberOfItems) elements, expected 3"
             )
         }
 
-        func text(_ field: StateField) -> String {
-            list.atIndex(field.rawValue)?.stringValue ?? ""
-        }
-        func number(_ field: StateField) -> Double {
-            list.atIndex(field.rawValue)?.doubleValue ?? -1
-        }
-        func flag(_ field: StateField) -> Bool {
-            list.atIndex(field.rawValue)?.booleanValue ?? false
+        guard let appRecord = list.atIndex(1) else {
+            throw MusicBridgeError.malformedResult("fetchState returned no application record")
         }
 
-        let rawPosition = number(.position)
-        let rawDuration = number(.duration)
-        let persistentID = text(.persistentID)
-        let name = text(.name)
-
-        // The script sends -1 for "no current track", so an empty id AND an empty
-        // name is the only reliable test: streams can have a name but no id.
-        let track: TrackInfo? = (persistentID.isEmpty && name.isEmpty)
-            ? nil
-            : TrackInfo(
-                persistentID: persistentID,
-                name: name,
-                artist: text(.artist),
-                album: text(.album),
-                duration: rawDuration > 0 ? rawDuration : 0
-            )
+        let rawPosition = list.atIndex(2)?.doubleValue ?? -1
+        let trackRecord = list.atIndex(3).flatMap { Self.isPresent($0) ? $0 : nil }
 
         return MusicState(
-            playerState: PlayerState(appleScriptText: text(.playerState)),
+            playerState: PlayerState(enumCode: Self.enumCode(appRecord, AppKey.playerState)),
             position: rawPosition >= 0 ? rawPosition : nil,
-            volume: max(0, Int(number(.volume))),
-            isShuffling: flag(.shuffle),
-            repeatMode: RepeatMode(appleScriptText: text(.repeatMode)),
-            track: track
+            volume: max(0, min(100, Self.integer(appRecord, AppKey.volume) ?? 0)),
+            isShuffling: Self.flag(appRecord, AppKey.shuffleEnabled) ?? false,
+            repeatMode: RepeatMode(enumCode: Self.enumCode(appRecord, AppKey.songRepeat)),
+            track: trackRecord.map(Self.track(from:))
         )
+    }
+
+    /// Music's own mute state (`pMut`), which arrives free in the application
+    /// record. §4.6's mute button is M2; this is here so it need not be re-read.
+    func fetchMuted() async throws -> Bool {
+        let list = try run(.fetchState)
+        guard let appRecord = list.atIndex(1) else { return false }
+        return Self.flag(appRecord, AppKey.mute) ?? false
+    }
+
+    // MARK: - Record parsing
+    //
+    // Each accessor matches the descriptor type observed with `--dump-records`:
+    // utxt → stringValue, enum → enumCodeValue, long → int32Value,
+    // doub → doubleValue, true/fals → booleanValue. They fall back rather than
+    // trap, because a field Music stops sending should degrade one value, not
+    // take down the whole sync.
+
+    private static func track(from record: NSAppleEventDescriptor) -> TrackInfo {
+        let duration = number(record, TrackKey.duration) ?? -1
+        return TrackInfo(
+            persistentID: text(record, TrackKey.persistentID) ?? "",
+            name: text(record, TrackKey.name) ?? "",
+            artist: text(record, TrackKey.artist) ?? "",
+            album: text(record, TrackKey.album) ?? "",
+            duration: duration > 0 ? duration : 0,
+            isFavourite: flag(record, TrackKey.favorited) ?? false
+        )
+    }
+
+    /// False for a `missing value` descriptor, which is not the same as absent.
+    private static func isPresent(_ descriptor: NSAppleEventDescriptor) -> Bool {
+        AEKeyword(descriptor.descriptorType) != missingValueType
+    }
+
+    private static func field(_ record: NSAppleEventDescriptor, _ key: AEKeyword) -> NSAppleEventDescriptor? {
+        guard let value = record.forKeyword(key), isPresent(value) else { return nil }
+        return value
+    }
+
+    private static func text(_ record: NSAppleEventDescriptor, _ key: AEKeyword) -> String? {
+        field(record, key)?.stringValue
+    }
+
+    private static func number(_ record: NSAppleEventDescriptor, _ key: AEKeyword) -> Double? {
+        field(record, key)?.doubleValue
+    }
+
+    private static func integer(_ record: NSAppleEventDescriptor, _ key: AEKeyword) -> Int? {
+        field(record, key).map { Int($0.int32Value) }
+    }
+
+    private static func flag(_ record: NSAppleEventDescriptor, _ key: AEKeyword) -> Bool? {
+        field(record, key)?.booleanValue
+    }
+
+    /// Enum fields arrive as `enum`, read through `enumCodeValue`. Zero means
+    /// absent, and every `init(enumCode:)` maps that to its own default.
+    private static func enumCode(_ record: NSAppleEventDescriptor, _ key: AEKeyword) -> OSType {
+        field(record, key)?.enumCodeValue ?? 0
     }
 
     // MARK: - Commands
@@ -285,6 +353,26 @@ final class MusicBridge {
             p95MS: percentile(0.95),
             maxMS: timings[timings.count - 1]
         )
+    }
+
+    /// M1 scaffolding: runs an ad-hoc source and returns the raw descriptor, so
+    /// the shape of a `properties` record can be inspected before a parser is
+    /// written against it. Guessing at four-char codes and descriptor types is
+    /// how you get a parser that silently returns zeroes.
+    func rawDescriptor(source: String) throws -> NSAppleEventDescriptor {
+        guard isMusicRunning else { throw MusicBridgeError.musicNotRunning }
+
+        let instance = NSAppleScript(source: source)
+        var compileError: NSDictionary?
+        guard instance?.compileAndReturnError(&compileError) == true, let instance else {
+            throw MusicBridgeError.compilationFailed(
+                (compileError?[NSAppleScript.errorMessage] as? String) ?? "unknown error"
+            )
+        }
+        var runError: NSDictionary?
+        let result = instance.executeAndReturnError(&runError)
+        if let runError { throw Self.mapError(runError) }
+        return result
     }
 
     // MARK: - Execution

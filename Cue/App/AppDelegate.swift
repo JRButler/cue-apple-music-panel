@@ -43,6 +43,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        if options.isTestClock {
+            let probe = M0Probe(controller: controller, options: options)
+            probe.runClockTests()
+            exit(probe.exitCode)
+        }
+
+        if options.isDumpRecords {
+            Task {
+                let probe = M0Probe(controller: controller, options: options)
+                await probe.runDumpRecords()
+                exit(probe.exitCode)
+            }
+            return
+        }
+
         if options.isWatch {
             Task {
                 let probe = M0Probe(controller: controller, options: options)
@@ -93,6 +108,10 @@ struct LaunchOptions: Sendable {
     var isWatch = false
     /// Raises the prompt expecting a refusal, to exercise §5's denied state.
     var isDeny = false
+    /// Dumps the structure of Music's `properties` records.
+    var isDumpRecords = false
+    /// Runs PlaybackClock's numeric checks. Needs neither Music nor permission.
+    var isTestClock = false
     /// Seconds to keep listening for `playerInfo` after the probe's fixed
     /// sequence, so a track change can be caught and timed.
     var listenSeconds: Int = 0
@@ -112,6 +131,10 @@ struct LaunchOptions: Sendable {
                 isWatch = true
             case "--deny":
                 isDeny = true
+            case "--dump-records":
+                isDumpRecords = true
+            case "--test-clock":
+                isTestClock = true
             case "--listen":
                 if let value = iterator.next(), let seconds = Int(value) { listenSeconds = seconds }
             case "--samples":

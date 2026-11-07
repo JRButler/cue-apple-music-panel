@@ -168,9 +168,26 @@ thread. Polling everything at 1 Hz would block for ~90 ms every second.
 - `fetchPosition()` — **the 1 Hz hot path.** `player position` alone: one
   reference, one event, 8.3 ms median. Nothing else goes in here, ever. Adding a
   single field to this call doubles its cost.
-- `fetchState()` — **the full sync, on notification only.** Two references via
-  `properties` records (application level, then `current track`), ~17 ms. Driven
-  by `playerInfo` (§3.2) and by explicit user action, never by the timer.
+- `fetchState()` — **the full sync, not on the timer.** Three references, ~25 ms:
+  `properties` (application), `player position`, and `properties of current
+  track`. Driven by `playerInfo` (§3.2) and by explicit user action.
+
+  Three, not two, because **`player position` is not in the application
+  `properties` record.** That record has 16 fields — `pnam`, `pPlS`, `vers`,
+  `pisf`, `pVol`, `pMut`, `pShE`, `pShM`, `pRpt`, `pVsE`, `pFSc`, `pEQ `, `pFix`,
+  `pCnv`, `pAPE`, `pAPD` — and neither `pPos` nor `pTrk` is among them. Verified
+  with `tools/run-probe.sh --dump-records`, which prints every keyword, its
+  descriptor type and its value; write parsers against that output, not against
+  the sdef alone.
+
+  `properties of current track` errors with **-1728** when nothing is queued,
+  rather than returning an empty record, so that reference needs its own `try`.
+
+**Use the notification payload for the instant update.** §3.2's payload already
+carries name, artist, album and player state, so the panel can repaint the moment
+a track changes, with the authoritative 3-event sync landing ~25 ms later. Do not
+take duration from the payload for the scrub bar: `Total Time` is rounded to the
+second where `duration` is precise.
 
 Volume, shuffle and repeat therefore update on notification rather than on the
 poll. A change made inside Music with no play-state change will lag until the
@@ -185,6 +202,20 @@ low-frequency secondary poll rather than into `fetchPosition()`.
   - While the panel is hidden, stop polling entirely.
   - The interpolated clock is what the scrub bar renders, so the 8.3 ms poll is a
     rendering stutter at worst, never a positional error.
+
+**Record field types**, as observed, since the accessor has to match:
+
+| descriptor type | accessor | fields |
+|---|---|---|
+| `utxt` | `stringValue` | `pnam`, artist, album, `pPIS` |
+| `enum` | `enumCodeValue` | `pPlS` (`kPSS`/`kPSP`/`kPSp`/`kPSF`/`kPSR`), `pRpt` (`kRpO`/`kRp1`/`kAll`), `pShM` |
+| `long` | `int32Value` | `pVol` |
+| `doub` | `doubleValue` | `pDur`, `pPos` |
+| `true` / `fals` | `booleanValue` | `pShE`, `pMut`, `pLov` |
+| `msng` | — | a genuinely absent value |
+
+Note booleans arrive as `true`/`fals`, not `bool`, so switching on the type
+string needs all three.
 
 **If the stutter is visible on the real panel**, §7.1's option 3 is the fallback:
 move the hot path to `NSAppleEventDescriptor.sendEvent(options:timeout:)`, which

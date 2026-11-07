@@ -30,6 +30,21 @@ enum PlayerState: String, Sendable, CaseIterable {
         }
     }
 
+    /// Built from the `ePlS` enum code in a `properties` record.
+    ///
+    /// Codes are preferred over `player state as text` wherever a record is
+    /// available: they are stable, whereas the text form risks being localised.
+    init(enumCode code: OSType) {
+        switch code {
+        case UInt32(AEKeyword(fourChar: "kPSS")): self = .stopped
+        case UInt32(AEKeyword(fourChar: "kPSP")): self = .playing
+        case UInt32(AEKeyword(fourChar: "kPSp")): self = .paused
+        case UInt32(AEKeyword(fourChar: "kPSF")): self = .fastForwarding
+        case UInt32(AEKeyword(fourChar: "kPSR")): self = .rewinding
+        default: self = .unknown
+        }
+    }
+
     /// True whenever the position is advancing, so the clock should run.
     var isAdvancing: Bool {
         switch self {
@@ -51,6 +66,15 @@ enum RepeatMode: String, Sendable, CaseIterable {
         switch raw.lowercased() {
         case "one": self = .one
         case "all": self = .all
+        default: self = .off
+        }
+    }
+
+    /// Built from the `eRpt` enum code in a `properties` record.
+    init(enumCode code: OSType) {
+        switch code {
+        case UInt32(AEKeyword(fourChar: "kRp1")): self = .one
+        case UInt32(AEKeyword(fourChar: "kAll")): self = .all
         default: self = .off
         }
     }
@@ -78,6 +102,10 @@ struct TrackInfo: Sendable, Equatable, Identifiable {
     var duration: TimeInterval
 
     var id: String { persistentID.isEmpty ? "\(name)\u{1F}\(artist)\u{1F}\(album)" : persistentID }
+
+    /// `favorited` (`pLov`), which arrives free in the track record. Parsed now
+    /// so M3 does not have to re-read it; nothing uses it yet.
+    var isFavourite: Bool = false
 
     /// §4.2: a track with no duration gets an indeterminate bar and no seeking.
     var isSeekable: Bool { duration > 0 }

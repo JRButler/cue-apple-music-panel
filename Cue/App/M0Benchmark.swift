@@ -97,49 +97,16 @@ struct M0Benchmark {
             """
         ),
         Variant(
-            name: "POLL-position-only",
-            rationale: "PROPOSED 1 Hz hot path: position alone, with everything else driven by notifications.",
+            name: "SHIPPED-poll",
+            rationale: "What fetchPosition() actually sends, at 1 Hz. Must stay at one event.",
             expectedEvents: 1,
-            source: """
-            with timeout of 2 seconds
-                tell application id "com.apple.Music" to return player position
-            end timeout
-            """
+            source: MusicScript.fetchPosition.source
         ),
         Variant(
-            name: "POLL-position-and-state",
-            rationale: "PROPOSED 1 Hz hot path plus player state, in case notifications prove unreliable.",
-            expectedEvents: 2,
-            source: """
-            with timeout of 2 seconds
-                tell application id "com.apple.Music"
-                    set a to player position
-                    set b to (player state as text)
-                    return {a, b}
-                end tell
-            end timeout
-            """
-        ),
-        Variant(
-            name: "SYNC-full-via-records",
-            rationale: "PROPOSED on-notification read: track record in one reference, five app fields separately.",
-            expectedEvents: 6,
-            source: """
-            with timeout of 2 seconds
-                tell application id "com.apple.Music"
-                    set ps to (player state as text)
-                    set vol to sound volume
-                    set shf to shuffle enabled
-                    set rpt to (song repeat as text)
-                    set pos to player position
-                    set tp to {}
-                    try
-                        set tp to properties of current track
-                    end try
-                    return {ps, pos, vol, shf, rpt, tp}
-                end tell
-            end timeout
-            """
+            name: "SHIPPED-sync",
+            rationale: "What fetchState() actually sends, on notification only.",
+            expectedEvents: 3,
+            source: MusicScript.fetchState.source
         ),
     ]
 }

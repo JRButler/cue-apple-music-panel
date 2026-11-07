@@ -23,7 +23,11 @@
 import Foundation
 
 enum MusicScript: String, CaseIterable, Sendable {
-    /// One batched read of every polled field (§3.1: never one call per property).
+    /// §3.3's 1 Hz hot path: `player position` and nothing else. One reference,
+    /// one Apple Event, ~8.3 ms. Adding a field here doubles the cost of every
+    /// tick, so do not.
+    case fetchPosition
+    /// §3.3's full sync, off the timer. Three references, ~25 ms.
     case fetchState
     case playPause
     case nextTrack
@@ -44,6 +48,7 @@ enum MusicScript: String, CaseIterable, Sendable {
 
     var source: String {
         switch self {
+        case .fetchPosition: Self.fetchPositionSource
         case .fetchState: Self.fetchStateSource
         case .playPause: Self.playPauseSource
         case .nextTrack: Self.nextTrackSource
@@ -58,63 +63,46 @@ enum MusicScript: String, CaseIterable, Sendable {
 
 extension MusicScript {
 
-    /// Returns a flat, fixed-order list rather than a record.
+    /// §3.3's hot path. Deliberately trivial: one property, one event.
     ///
-    /// A record with custom keys comes back wrapped in a `usrf` key/value list that
-    /// has to be walked pairwise; a list is indexable directly. The point of §3.1 —
-    /// one round trip for every field — is unaffected. The order here must match
-    /// `MusicBridge.StateField`.
-    ///
-    /// Note which reads are wrapped in `try` and which are not. This is load-bearing.
-    ///
-    /// `player state` is read first and deliberately left unprotected, as a canary.
-    /// If we are not permitted to drive Music, every read fails, and wrapping them
-    /// all would turn that into a well-formed list of empty values — a silent lie
-    /// that looks like a stopped player and hides §5's "automation denied" state.
-    /// Leaving the first reads bare lets the error reach `MusicBridge.mapError`.
-    /// Volume, shuffle and repeat are the same: Music always has those, so a
-    /// failure there is systemic and should propagate.
-    ///
-    /// Only genuinely absent things get a `try`: `player position` is `missing
-    /// value` when stopped, `current track` errors when nothing is queued, and
-    /// `duration` is absent on some streams (§4.2's indeterminate-bar case).
-    ///
-    /// Two seconds, because this runs at 1 Hz: a read that takes longer than that
-    /// has already missed its slot, and the clock in §3.3 will interpolate over it.
-    static let fetchStateSource = """
+    /// Two seconds, because this runs at 1 Hz — a read slower than that has
+    /// already missed its slot, and PlaybackClock interpolates over the gap.
+    static let fetchPositionSource = """
     with timeout of 2 seconds
         tell application id "com.apple.Music"
-            -- Canary: unprotected on purpose. See the note above.
-            set ps to (player state as text)
-            set vol to sound volume
-            set shf to shuffle enabled
-            set rpt to (song repeat as text)
+            set pos to player position
+            if pos is missing value then return -1
+            return pos
+        end tell
+    end timeout
+    """
 
-            set pos to -1
+    /// The full sync: three references, returned as a three-element list.
+    ///
+    /// M0 measured one property reference as one ~8.3 ms Apple Event, so the
+    /// shape of this script is its cost. `properties` returns an entire record
+    /// for a single reference, which is what makes this 3 events rather than the
+    /// 10 it started as. Measured with `--bench`; see §6.1.
+    ///
+    /// It has to be three, not two, because **`player position` is not in the
+    /// application `properties` record** — that record has 16 fields and neither
+    /// `pPos` nor `pTrk` is among them. Verified with `--dump-records`.
+    ///
+    /// `properties of current track` raises -1728 when nothing is queued rather
+    /// than returning an empty record, so it needs its own `try`. The other two
+    /// are unprotected on purpose: see the canary note in §3.1 — wrapping them
+    /// would turn a refused connection into a plausible-looking stopped player.
+    static let fetchStateSource = """
+    with timeout of 5 seconds
+        tell application id "com.apple.Music"
+            set appProps to properties
+            set pos to player position
+            if pos is missing value then set pos to -1
+            set trackProps to missing value
             try
-                set pos to player position
-                if pos is missing value then set pos to -1
+                set trackProps to properties of current track
             end try
-
-            set pid to ""
-            set tnm to ""
-            set tar to ""
-            set tal to ""
-            set tdu to -1
-            try
-                tell current track
-                    set pid to (persistent ID as text)
-                    set tnm to (name as text)
-                    set tar to (artist as text)
-                    set tal to (album as text)
-                    try
-                        set tdu to duration
-                        if tdu is missing value then set tdu to -1
-                    end try
-                end tell
-            end try
-
-            return {ps, pos, vol, shf, rpt, pid, tnm, tar, tal, tdu}
+            return {appProps, pos, trackProps}
         end tell
     end timeout
     """
