@@ -270,8 +270,16 @@ Shuffle and repeat flank the transport group once M3 lands.
 
 ```sh
 xcodebuild -project Cue.xcodeproj -scheme Cue -configuration Debug build
-tools/run-probe.sh [--listen <seconds>] [--samples <n>]   # M0 measurement sequence
+
+tools/run-probe.sh [--samples <n>] [--listen <s>]  # the M0 measurement sequence
+tools/run-probe.sh --grant      # raise the Automation prompt and wait for OK
+tools/run-probe.sh --deny       # same, asking for a refusal, to test §5
+tools/run-probe.sh --bench      # time fetchState variants against each other
+tools/run-probe.sh --watch      # drive a track change, report the notification
 ```
+
+Running the app with no arguments gives a status item and the M0 debug window
+instead. All of this is spike scaffolding and goes when the panel lands.
 
 Debug builds are signed with Developer ID, not ad-hoc, and that is deliberate.
 Automation access is granted to a code signature, so a stable signing identity
@@ -311,11 +319,15 @@ changing the bundle id resets the Automation grant, so the prompt returns once.
 - Handle the first-run Automation permission prompt and the denied state.
 - Write `fetchState()` latency, the notification keys, and the favourite property name into this file.
 
-**Acceptance criteria**
-- Track changes are logged within 200 ms.
-- Music is never launched by Cue.
-- Denied permission is detected and reported.
-- Measured `fetchState()` latency is recorded in this file.
+**Acceptance criteria — all met**
+- [x] Track changes are logged within 200 ms. Worst observed: **82.5 ms**.
+- [x] Music is never launched by Cue. Five of five entry points refused with
+      Music closed, and it stayed closed.
+- [x] Denied permission is detected and reported. Verified end to end with a real
+      refusal, plus a synthetic check of every row of the error table.
+- [x] Measured `fetchState()` latency is recorded in this file — and it missed
+      §3.1's budget by 10x, which is the substantive outcome of this milestone.
+      See §6.1 and the decision in §7.1.
 
 #### 6.1 M0 findings
 
@@ -406,14 +418,29 @@ disproved. Two lessons, both cheap to apply: register explicit names, and when a
 diagnostic says a system feature is gone, verify it from outside the code under
 test before believing it.
 
-**Still to record:**
+**The §3.1 guard — verified.** With Music closed, all five entry points
+(`fetchState`, `playPause`, `next`, `previous`, `seek`) refused with
+`.musicNotRunning`, and Music was still not running afterwards. Run it yourself
+with `tools/run-probe.sh` while Music is closed; the check skips itself when
+Music is up, because a guard cannot be tested against a running app.
 
-- [ ] The §3.1 guard exercised with Music closed (the probe skips this check while
-      Music is running, since the guard cannot be tested against a running app).
-- [ ] The denied-permission path. Detection is proven for `notDetermined` (-1744)
-      and `musicNotRunning` (-600), which share the mapping machinery, but a real
-      "Don't Allow" has not been exercised. Needs a `tccutil reset AppleEvents
-      nz.slstudio.Cue` and a deliberate refusal, then a re-grant.
+**The denied-permission path — verified end to end.** `tools/run-probe.sh --deny`
+raises the prompt asking for a refusal; after clicking Don't Allow, the permission
+check reports `DENIED` with the System Settings route, and `fetchState()` throws
+`.automationDenied`, surfacing §5's "Cue needs permission to control Music."
+This is also what retroactively proves the canary-read decision in §3.1: under the
+original all-`try` script, this exact condition returned a *plausible stopped
+player* instead of an error.
+
+Every row of §3.1's error table is checked synthetically on each probe run
+(-1743, -1744, -600, -609, -1712, and an arbitrary code), since provoking a real
+-1712 means hanging Music and a real -1743 needs a human click.
+
+**One caveat on the latency figure.** It depends on whether a track is loaded,
+exactly as the per-event model predicts: ~91.5 ms with a current track (ten
+references) against ~57.4 ms with nothing queued, where the `current track` block
+fails in one event rather than making five reads. Quote the with-a-track figure;
+it is the one the panel will live with.
 
 ### M1 — Panel and scrub bar
 - Build the floating panel (§4.1) and the full scrub bar (§4.2).

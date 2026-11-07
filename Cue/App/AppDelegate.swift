@@ -5,6 +5,7 @@
 //  M0 lifecycle. Three modes:
 //    (no arguments)  status item + debug window, for watching events live
 //    --grant         raise the Automation prompt and wait for an answer, then exit
+//    --deny          same prompt, but asking for a refusal, to test §5's state
 //    --bench         time fetchState variants against each other, then exit
 //    --watch         trigger a track change and report every notification seen
 //    --probe         run the M0 measurement sequence to stdout, then exit
@@ -27,9 +28,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         controller.start()
 
-        if options.isGrant {
+        if options.isGrant || options.isDeny {
             let probe = M0Probe(controller: controller, options: options)
-            probe.runGrant()
+            probe.runGrant(expectingRefusal: options.isDeny)
             exit(probe.exitCode)
         }
 
@@ -90,6 +91,8 @@ struct LaunchOptions: Sendable {
     var isBench = false
     /// Triggers a real track change and reports every notification it produces.
     var isWatch = false
+    /// Raises the prompt expecting a refusal, to exercise §5's denied state.
+    var isDeny = false
     /// Seconds to keep listening for `playerInfo` after the probe's fixed
     /// sequence, so a track change can be caught and timed.
     var listenSeconds: Int = 0
@@ -107,6 +110,8 @@ struct LaunchOptions: Sendable {
                 isBench = true
             case "--watch":
                 isWatch = true
+            case "--deny":
+                isDeny = true
             case "--listen":
                 if let value = iterator.next(), let seconds = Int(value) { listenSeconds = seconds }
             case "--samples":

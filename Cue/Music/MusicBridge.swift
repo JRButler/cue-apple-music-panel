@@ -359,8 +359,9 @@ final class MusicBridge {
         return event
     }
 
-    /// §3.1's error table.
-    private static func mapError(_ error: NSDictionary) -> MusicBridgeError {
+    /// §3.1's error table. Not private so M0 can verify every row of it
+    /// without having to provoke each condition for real.
+    static func mapError(_ error: NSDictionary) -> MusicBridgeError {
         let code = (error[NSAppleScript.errorNumber] as? NSNumber)?.intValue ?? 0
         let message = (error[NSAppleScript.errorMessage] as? String) ?? "unknown error"
 

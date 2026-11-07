@@ -57,6 +57,7 @@ final class M0Probe {
         emit("macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
         emit("")
 
+        await checkErrorMapping()
         await checkScriptsCompiled()
         await checkGuardWhenMusicClosed()
         await checkPermission()
@@ -77,7 +78,7 @@ final class M0Probe {
     /// `AEDeterminePermissionToAutomateTarget(askUserIfNeeded: true)` is the
     /// purpose-built call: it raises the same prompt and blocks until answered,
     /// with no event and no timeout.
-    func runGrant() {
+    func runGrant(expectingRefusal: Bool = false) {
         heading("Automation permission")
 
         guard controller.bridge.isMusicRunning else {
@@ -89,24 +90,40 @@ final class M0Probe {
         let before = controller.bridge.automationPermission(askIfNeeded: false)
         emit("  Current state: \(Self.describe(before))")
 
-        if before == .granted {
+        if before == .granted, !expectingRefusal {
             pass("already granted — nothing to do")
+            printVerdict()
+            return
+        }
+        if before == .granted, expectingRefusal {
+            fail("still granted. Run `tccutil reset AppleEvents nz.slstudio.Cue` first, "
+                + "otherwise no prompt is raised.")
             printVerdict()
             return
         }
 
         emit("")
-        emit("  Raising the prompt now. Look for a dialog saying Cue wants to")
-        emit("  control Music, and click OK. Waiting…")
+        if expectingRefusal {
+            emit("  Raising the prompt now. Click DON'T ALLOW — this run is")
+            emit("  deliberately testing the refusal path. Waiting…")
+        } else {
+            emit("  Raising the prompt now. Look for a dialog saying Cue wants to")
+            emit("  control Music, and click OK. Waiting…")
+        }
         emit("")
 
         let after = controller.bridge.automationPermission(askIfNeeded: true)
 
         switch after {
         case .granted:
-            pass("granted — run the probe next")
+            expectingRefusal
+                ? fail("granted, but this run wanted a refusal — click DON'T ALLOW")
+                : pass("granted — run the probe next")
         case .denied:
-            fail("refused. Re-enable Cue under System Settings → Privacy & Security → Automation.")
+            expectingRefusal
+                ? pass("refused, as asked. §5's denied state is now reachable; "
+                    + "run the probe to see it reported, then --grant to restore.")
+                : fail("refused. Re-enable Cue under System Settings → Privacy & Security → Automation.")
         case .notDetermined:
             fail("still undetermined — the prompt was dismissed without an answer.")
         case .musicNotRunning:
@@ -264,6 +281,35 @@ final class M0Probe {
     }
 
     // MARK: - Checks
+
+    /// Verifies every row of §3.1's error table without provoking each condition.
+    /// A real refusal needs a human to click Don't Allow; a real -1712 needs
+    /// Music to hang. The mapping itself can be checked directly.
+    private func checkErrorMapping() async {
+        heading("0. Error mapping (§3.1)")
+
+        let cases: [(code: Int, expected: MusicBridgeError, label: String)] = [
+            (-1743, .automationDenied, "errAEEventNotPermitted"),
+            (-1744, .automationDenied, "errAEEventWouldRequireUserConsent"),
+            (-600, .musicNotRunning, "procNotFound"),
+            (-609, .musicNotRunning, "connectionInvalid"),
+            (-1712, .timedOut, "errAETimeout"),
+            (-1728, .scriptError(code: -1728, message: "synthetic"), "arbitrary → scriptError"),
+        ]
+
+        for item in cases {
+            let synthetic: NSDictionary = [
+                NSAppleScript.errorNumber: NSNumber(value: item.code),
+                NSAppleScript.errorMessage: "synthetic",
+            ]
+            let mapped = MusicBridge.mapError(synthetic)
+            if mapped == item.expected {
+                pass("\(item.code) \(item.label) → \(mapped)")
+            } else {
+                fail("\(item.code) \(item.label) mapped to \(mapped), expected \(item.expected)")
+            }
+        }
+    }
 
     private func checkScriptsCompiled() async {
         heading("1. Script compilation")
