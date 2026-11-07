@@ -245,6 +245,48 @@ final class MusicBridge {
         )
     }
 
+    /// M0 only: compiles an arbitrary source and times it, so `fetchState`
+    /// variants can be compared head to head. Lives here rather than in the
+    /// benchmark harness so §3.1's rule holds — this stays the only type that
+    /// sends Apple Events. Goes away with the spike.
+    func benchmarkAdHoc(source: String, samples: Int) throws -> LatencyReport {
+        guard isMusicRunning else { throw MusicBridgeError.musicNotRunning }
+
+        let instance = NSAppleScript(source: source)
+        var compileError: NSDictionary?
+        guard instance?.compileAndReturnError(&compileError) == true, let instance else {
+            throw MusicBridgeError.compilationFailed(
+                (compileError?[NSAppleScript.errorMessage] as? String) ?? "unknown error"
+            )
+        }
+
+        var timings: [Double] = []
+        timings.reserveCapacity(samples)
+
+        for _ in 0 ..< samples {
+            var runError: NSDictionary?
+            let start = ContinuousClock.now
+            _ = instance.executeAndReturnError(&runError)
+            let elapsed = ContinuousClock.now - start
+            if let runError { throw Self.mapError(runError) }
+            timings.append(Double(elapsed.components.seconds) * 1000
+                + Double(elapsed.components.attoseconds) / 1e15)
+        }
+
+        timings.sort()
+        func percentile(_ fraction: Double) -> Double {
+            timings[min(timings.count - 1, max(0, Int((fraction * Double(timings.count - 1)).rounded())))]
+        }
+
+        return LatencyReport(
+            samples: timings.count,
+            minMS: timings[0],
+            medianMS: percentile(0.5),
+            p95MS: percentile(0.95),
+            maxMS: timings[timings.count - 1]
+        )
+    }
+
     // MARK: - Execution
 
     /// Runs a compiled script, applying the §3.1 guard and the §3.1 error mapping.

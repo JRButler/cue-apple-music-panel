@@ -301,11 +301,53 @@ thread. Found the hard way: with an Automation prompt waiting unanswered, a
 `fetchState()` call blocked for the full two minutes and returned `-1712`. Every
 script now carries an explicit `with timeout` — see §3.1.
 
-**Still to record (needs a granted permission and a playing track):**
+**`fetchState()` latency — measured, and §3.1's 10 ms budget was being missed
+by 10x.** 200 samples, Music paused with a track loaded:
 
-- [ ] `fetchState()` latency. The figure measured while the connection was being
-      refused (median 7.3 ms, p95 9.9 ms over 100 samples) is **not valid** — each
-      property read was failing, not reading, so it timed refusals. Re-measure.
+```
+min 74.9 ms   median 91.5 ms   p95 101.7 ms   max 109.3 ms
+```
+
+`tools/run-probe.sh --bench` breaks down where that goes (60 samples each):
+
+| variant | refs | median | p95 | ms per ref |
+|---|---|---|---|---|
+| no-event baseline (`tell` reading nothing) | 0 | 0.5 ms | 0.7 | — |
+| one reference (`player position`) | 1 | 8.3 ms | 25.9 | 8.3 |
+| ten references (what §3.1 first described) | 10 | 93.2 ms | 102.6 | 9.3 |
+| same ten, `tell application "Music"` by name | 10 | 92.0 ms | 115.3 | 9.2 |
+| five app fields in one list literal | 5 | 43.5 ms | 59.6 | 8.7 |
+| **`properties of current track`** | **1** | **8.3 ms** | 11.5 | 8.3 |
+| **`properties` (application level)** | **1** | **8.5 ms** | 24.5 | 8.5 |
+
+What this establishes:
+
+1. **One property reference is one Apple Event, and each costs ~8.3 ms.** The
+   relationship is linear: two references cost 16.6 ms, ten cost 93 ms.
+2. **AppleScript is not the cost.** A `tell` block that reads nothing runs in
+   0.5 ms, so essentially all of it is the round trip to Music.
+3. **A list literal does not coalesce.** `{a, b, c, d, e}` is five events, not
+   one, so "batch the reads into one script" does not batch the *events* — which
+   is what §3.1 actually needs. One `NSAppleScript` execution is not one event.
+4. **`properties` returns a whole record for one event.** `properties of current
+   track` (8.3 ms) carries name, artist, album, duration, persistent ID and
+   favorited together. `properties` on the application works too (8.5 ms) and
+   carries player state, position, volume, shuffle and repeat — even though the
+   sdef declares `properties`/`pALL` only on `item`, and `application` does not
+   inherit from it. Undeclared but answered; verified by measurement.
+5. **Addressing by name or by bundle id costs the same.** Keep the id form for
+   its robustness.
+
+So a full sync is 2 events (~17 ms), not 10 (~93 ms), and the 1 Hz hot path
+needs only `player position` — 1 event, 8.3 ms median, an 11x improvement.
+
+**This invalidates §3.3's polling design and needs a decision — see §7.1.**
+Polling everything at 1 Hz costs 93 ms of blocked main thread every second. Even
+the reduced 8.3 ms is a dropped frame at 120 Hz, once a second, under a scrub bar
+that is supposed to animate at refresh rate. Options are in §7.
+
+**Still to record:**
+
 - [ ] The real `com.apple.Music.playerInfo` `userInfo` keys. The expected set
       (Name, Artist, Album, Total Time, Player State, Persistent ID) is still
       unverified on macOS 27; `tools/run-probe.sh --listen 30` surveys and prints
@@ -346,6 +388,44 @@ script now carries an explicit `with timeout` — see §3.1.
 ---
 
 ## 7. Open questions
-- Final name.
+
+### 7.1 Polling and the main thread — needs a decision before M1
+
+M0 measured one Apple Event at ~8.3 ms, and `NSAppleScript` blocks the thread it
+runs on, which §3.1 says is the main thread. §3.3's "poll `fetchState()` at 1 Hz"
+therefore blocks the main thread for 93 ms every second as first written, or
+8.3 ms if reduced to a position-only read. At 120 Hz a frame is 8.3 ms, so even
+the reduced version drops a frame once a second underneath a scrub bar that is
+meant to move at refresh rate. Four options, cheapest first:
+
+1. **Split the reads, keep the main thread.** A position-only poll at 1 Hz
+   (8.3 ms) plus a full 2-event sync (~17 ms) on notification. One dropped frame
+   per second, hidden behind `PlaybackClock`'s interpolation — the bar keeps
+   moving from the local clock, so the hiccup is a rendering stutter, not a
+   position error. Smallest change; delivers §3.1's budget on the hot path.
+2. **As above, but poll less often.** The clock interpolates anyway, so a
+   correction every 2–5 s may be enough. Fewer stutters, slightly staler data,
+   and §4.2's 0.5 s accuracy requirement still holds because interpolation is
+   what keeps it accurate between syncs.
+3. **Move the events off the main thread.** `NSAppleEventDescriptor.sendEvent(options:timeout:)`
+   is public, available since 10.11, and can be called off the main thread —
+   unlike `NSAppleScript`, which is not thread-safe. It means building the
+   `core`/`getd` event and object specifier by hand instead of writing
+   AppleScript. No stutter at all, at the cost of more code and a second,
+   lower-level path through §3.1.
+4. **Accept 93 ms.** Only viable if the panel turns out to feel fine, which the
+   numbers suggest it will not.
+
+Option 1 is the recommendation for M1, with 3 held in reserve if the stutter is
+visible on the real panel. Either way §3.3 needs rewriting.
+
+A related gain, independent of which option wins: reading `properties` records
+means parsing enum **codes** (`kPSP`, `kRpO`) rather than `player state as text`.
+Codes are stable; the text form risks being localised on a non-English system.
+The four-char codes are in the sdef and already noted in `MusicTypes`.
+
+### 7.2 Product questions
+
+- Final name. "Cue" is a working title; §5a lists everywhere it appears.
 - Visual direction: minimal glass, or something with more character?
 - Should we ever support non-Music players via MediaRemote? This is out of scope unless decided otherwise.

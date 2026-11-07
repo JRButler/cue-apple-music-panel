@@ -13,6 +13,8 @@
 # ~/Library/Logs/Cue/m0-probe-report.txt, which this script prints at the end.
 #
 # Usage: tools/run-probe.sh [--listen <seconds>] [--samples <n>]
+#        tools/run-probe.sh --grant      # one-time: raise the prompt and wait
+#        tools/run-probe.sh --bench [--samples <n>]   # compare fetchState variants
 
 set -e
 cd "${0:a:h}/.."
@@ -34,7 +36,12 @@ echo "Music processes before: $MUSIC_BEFORE"
 echo
 
 # -n forces a fresh instance, -W waits for it to exit.
-open -n -W -a "$APP" --args --probe "$@"
+# --grant is its own mode; everything else runs the probe sequence.
+if [[ " $* " == *" --grant "* || " $* " == *" --bench "* ]]; then
+  open -n -W -a "$APP" --args "$@"
+else
+  open -n -W -a "$APP" --args --probe "$@"
+fi
 
 MUSIC_AFTER=$(pgrep -x Music | wc -l | tr -d ' ')
 

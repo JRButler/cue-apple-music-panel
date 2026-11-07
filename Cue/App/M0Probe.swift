@@ -68,6 +68,130 @@ final class M0Probe {
         printVerdict()
     }
 
+    /// One-time permission bootstrap.
+    ///
+    /// Deliberately does NOT send an Apple Event. Sending one does raise the
+    /// prompt, but the event carries our `with timeout` and gives up after a
+    /// couple of seconds, and the dialog goes with the process when it exits —
+    /// so a human never gets a chance to answer it.
+    /// `AEDeterminePermissionToAutomateTarget(askUserIfNeeded: true)` is the
+    /// purpose-built call: it raises the same prompt and blocks until answered,
+    /// with no event and no timeout.
+    func runGrant() {
+        heading("Automation permission")
+
+        guard controller.bridge.isMusicRunning else {
+            fail("Music is not running. Open Music first — there is nothing to ask about.")
+            printVerdict()
+            return
+        }
+
+        let before = controller.bridge.automationPermission(askIfNeeded: false)
+        emit("  Current state: \(Self.describe(before))")
+
+        if before == .granted {
+            pass("already granted — nothing to do")
+            printVerdict()
+            return
+        }
+
+        emit("")
+        emit("  Raising the prompt now. Look for a dialog saying Cue wants to")
+        emit("  control Music, and click OK. Waiting…")
+        emit("")
+
+        let after = controller.bridge.automationPermission(askIfNeeded: true)
+
+        switch after {
+        case .granted:
+            pass("granted — run the probe next")
+        case .denied:
+            fail("refused. Re-enable Cue under System Settings → Privacy & Security → Automation.")
+        case .notDetermined:
+            fail("still undetermined — the prompt was dismissed without an answer.")
+        case .musicNotRunning:
+            fail("Music quit while we were asking.")
+        case let .unknown(status):
+            fail("unexpected OSStatus \(status)")
+        }
+
+        printVerdict()
+    }
+
+    private static func describe(_ permission: AutomationPermission) -> String {
+        switch permission {
+        case .granted: "granted"
+        case .denied: "denied"
+        case .notDetermined: "not yet determined"
+        case .musicNotRunning: "Music not running"
+        case let .unknown(status): "unknown (OSStatus \(status))"
+        }
+    }
+
+    /// Times each `M0Benchmark` variant and prints a table, so the shape of the
+    /// ~90 ms `fetchState()` cost is visible rather than guessed at.
+    func runBenchmark() async {
+        heading("fetchState() variants")
+
+        guard controller.bridge.isMusicRunning else {
+            fail("Music is not running")
+            printVerdict()
+            return
+        }
+
+        let samples = max(10, options.latencySamples)
+        emit("  \(samples) samples each. Expected events assume one Apple Event per reference.")
+        emit("")
+        emit(String(format: "  %-26s %5s  %8s  %8s  %8s   %s",
+                    ("variant" as NSString).utf8String!,
+                    ("evts" as NSString).utf8String!,
+                    ("min" as NSString).utf8String!,
+                    ("median" as NSString).utf8String!,
+                    ("p95" as NSString).utf8String!,
+                    ("ms/event" as NSString).utf8String!))
+        emit("  " + String(repeating: "─", count: 76))
+
+        var results: [(M0Benchmark.Variant, MusicBridge.LatencyReport)] = []
+
+        for variant in M0Benchmark.variants {
+            do {
+                let report = try controller.bridge.benchmarkAdHoc(source: variant.source, samples: samples)
+                results.append((variant, report))
+                let perEvent = report.medianMS / Double(variant.expectedEvents)
+                emit(String(format: "  %-26@ %5d  %7.1f  %7.1f  %7.1f   %7.1f",
+                            variant.name as NSString,
+                            variant.expectedEvents,
+                            report.minMS, report.medianMS, report.p95MS, perEvent))
+            } catch {
+                fail("\(variant.name): \((error as? MusicBridgeError)?.localizedDescription ?? "\(error)")")
+            }
+        }
+
+        emit("")
+        heading("What each variant was testing")
+        for variant in M0Benchmark.variants {
+            emit("  \(variant.name)")
+            emit("      \(variant.rationale)")
+        }
+
+        // The decisive comparison: does collapsing references collapse the time?
+        if let current = results.first(where: { $0.0.name == "ten-references" }),
+           let candidate = results.first(where: { $0.0.name == "POLL-position-only" }) {
+            heading("Verdict on the hypothesis")
+            let factor = current.1.medianMS / max(candidate.1.medianMS, 0.001)
+            emit(String(format: "  today, polled at 1 Hz (10 references):  %.1f ms median", current.1.medianMS))
+            emit(String(format: "  proposed 1 Hz hot path (position only): %.1f ms median", candidate.1.medianMS))
+            emit(String(format: "  speed-up: %.1fx", factor))
+            if candidate.1.p95MS < 10 {
+                pass(String(format: "candidate p95 %.1f ms is inside §3.1's 10 ms budget", candidate.1.p95MS))
+            } else {
+                note(String(format: "candidate p95 %.1f ms still exceeds 10 ms — needs another approach", candidate.1.p95MS))
+            }
+        }
+
+        printVerdict()
+    }
+
     // MARK: - Checks
 
     private func checkScriptsCompiled() async {

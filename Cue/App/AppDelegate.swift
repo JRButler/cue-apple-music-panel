@@ -2,8 +2,10 @@
 //  AppDelegate.swift
 //  Cue
 //
-//  M0 lifecycle. Two modes:
+//  M0 lifecycle. Three modes:
 //    (no arguments)  status item + debug window, for watching events live
+//    --grant         raise the Automation prompt and wait for an answer, then exit
+//    --bench         time fetchState variants against each other, then exit
 //    --probe         run the M0 measurement sequence to stdout, then exit
 //
 //  The probe exists so M0's acceptance criteria can be checked from a shell and
@@ -23,6 +25,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let options = LaunchOptions(arguments: CommandLine.arguments)
 
         controller.start()
+
+        if options.isGrant {
+            let probe = M0Probe(controller: controller, options: options)
+            probe.runGrant()
+            exit(probe.exitCode)
+        }
+
+        if options.isBench {
+            Task {
+                let probe = M0Probe(controller: controller, options: options)
+                await probe.runBenchmark()
+                exit(probe.exitCode)
+            }
+            return
+        }
 
         if options.isProbe {
             Task {
@@ -57,6 +74,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// Parsed command line. Keeps argument handling out of the delegate body.
 struct LaunchOptions: Sendable {
     var isProbe = false
+    /// One-time permission bootstrap. Prompts and waits for an answer.
+    var isGrant = false
+    /// Times fetchState variants against each other.
+    var isBench = false
     /// Seconds to keep listening for `playerInfo` after the probe's fixed
     /// sequence, so a track change can be caught and timed.
     var listenSeconds: Int = 0
@@ -68,6 +89,10 @@ struct LaunchOptions: Sendable {
             switch argument {
             case "--probe":
                 isProbe = true
+            case "--grant":
+                isGrant = true
+            case "--bench":
+                isBench = true
             case "--listen":
                 if let value = iterator.next(), let seconds = Int(value) { listenSeconds = seconds }
             case "--samples":
