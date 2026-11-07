@@ -509,6 +509,51 @@ it is the one the panel will live with.
 - Using the panel never steals focus from the frontmost app.
 - Idle CPU use is under 1% while paused.
 
+#### 6.2 M1 progress (in flight)
+
+**Built and working:** `PlayerModel`, `PlaybackClock`, `PanelController`,
+`PanelView`, `ScrubBar`, `TimeFormatting`. The panel floats, drags by its
+background, persists its frame, and the scrub bar seeks by click and by drag —
+confirmed by hand. The M0 debug window is gone.
+
+**§7.1's split, measured with a track playing** (`--bench`):
+
+| path | events | median | p95 |
+|---|---|---|---|
+| `fetchPosition()`, the 1 Hz hot path | 1 | **8.4 ms** | 16.2 ms |
+| `fetchState()`, on notification | 3 | **25.8 ms** | 41.6 ms |
+| what it replaced | 10 | 91.3 ms | 100.7 ms |
+
+The record parser is verified against a real track: 58 fields for one event,
+with persistent ID, duration and `favorited` all correct.
+
+**Open: CPU while playing is ~6%, which is too high.** It was ~12%; the first
+half was `TimeFormatting.endTime` building a `DateFormatter` on every frame,
+which `sample` traced through `__CreateCFDateFormatter` into ICU's `udat_open`.
+That formatter is now cached. The remaining ~6% is SwiftUI re-rendering
+`ScrubBar` 30 times a second, and the thumb only moves about a pixel a second,
+so the rate is the thing to attack. Options, cheapest first:
+
+1. Split the view so the timeline drives only the thumb offset and progress
+   fill, leaving the labels — which change once a second — out of the high-rate
+   body entirely. The end-time string changes once a *minute*.
+2. Drop the passive rate to 10–15 Hz. Still sub-pixel per frame at this speed.
+   Dragging is unaffected either way, since the gesture drives its own repaints.
+3. Check whether `.ultraThinMaterial` behind a 30 Hz invalidation is forcing a
+   backdrop re-blur each frame, which would be the real cost rather than the
+   text.
+
+**Not yet verified:**
+
+- [ ] Idle CPU under 1% while paused — the actual acceptance criterion. The
+      timeline is `paused:` when nothing advances, so this should be near zero,
+      but it has not been measured.
+- [ ] One seek per drag. Needs instrumenting; `commitSeek` is called only from
+      `onEnded`, but that should be proved, not assumed.
+- [ ] End time correct after a pause and resume.
+- [ ] Never steals focus — needs judging by eye while typing in another app.
+- [ ] Off-screen frame clamping, which needs a display change to exercise.
+
 ### M2 — Album art, transport, volume
 - Implement §4.3, §4.4, and §4.6, using the layout in §4.6a.
 
@@ -567,6 +612,27 @@ A related gain, independent of which option wins: reading `properties` records
 means parsing enum **codes** (`kPSP`, `kRpO`) rather than `player state as text`.
 Codes are stable; the text form risks being localised on a non-English system.
 The four-char codes are in the sdef and already noted in `MusicTypes`.
+
+### 7.3 Keyboard seeking cannot coexist with the focus contract
+
+§4.1 requires that using the panel never activates Cue or steals focus, and M1's
+acceptance criteria restate it. That is delivered with `.nonactivatingPanel` plus
+`becomesKeyOnlyIfNeeded = true`.
+
+The consequence: a panel that never takes key status never receives key events,
+so §4.2's `←`/`→` seeking is unreachable in ordinary use. The handlers are wired
+and work if the panel is somehow key, but nothing in normal interaction makes it
+key — by design, because the alternative is that clicking the panel silently
+swallows the keystrokes meant for whatever you were typing in.
+
+Three ways out, for a decision in M5:
+
+1. **§4.9's global hotkey.** Seeking works from anywhere, no focus change. The
+   natural answer, and already in scope for M5.
+2. **An explicit "focus panel" affordance** — a status-item item, or ⌥-click —
+   so the user opts into key status when they want the keyboard.
+3. **Weaken the contract**, letting a click take key status. Not recommended:
+   it breaks the criterion that justifies the whole panel design.
 
 ### 7.2 Product questions
 

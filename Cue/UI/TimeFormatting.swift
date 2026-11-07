@@ -28,19 +28,54 @@ enum TimeFormatting {
         clock(seconds, includeHours: seconds >= 3600)
     }
 
-    /// The wall-clock time the track will finish, e.g. "ends 2:47 pm".
+    /// The wall-clock time the track will finish, e.g. "ends 2:47 PM".
     ///
     /// Uses the user's locale and 12/24-hour setting via `.short`, rather than
     /// hard-coding a pattern.
+    ///
+    /// **The formatter is cached, and that is not a micro-optimisation.** This is
+    /// called from the scrub bar's body, so it ran 30 times a second; building a
+    /// `DateFormatter` each time went through `__CreateCFDateFormatter` into ICU's
+    /// `udat_open` and accounted for essentially all of the panel's CPU use —
+    /// about 12% while playing, found with `sample`. Cached, it is free.
+    @MainActor
     static func endTime(remaining: TimeInterval, now: Date = Date(),
                         locale: Locale = .autoupdatingCurrent,
                         timeZone: TimeZone = .autoupdatingCurrent) -> String {
+        let formatter = cachedFormatter(locale: locale, timeZone: timeZone)
+        return "ends " + formatter.string(from: now.addingTimeInterval(max(0, remaining)))
+    }
+
+    /// Keyed by locale and time zone, so a test passing explicit ones does not
+    /// poison the cache for the live ones.
+    @MainActor private static var formatters: [String: DateFormatter] = [:]
+    @MainActor private static var localeObserver: NSObjectProtocol?
+
+    @MainActor
+    private static func cachedFormatter(locale: Locale, timeZone: TimeZone) -> DateFormatter {
+        // The 12/24-hour switch in System Settings changes the format without
+        // changing the locale identifier, so the cache is cleared on the locale
+        // notification rather than relying on the key alone.
+        if localeObserver == nil {
+            localeObserver = NotificationCenter.default.addObserver(
+                forName: NSLocale.currentLocaleDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { _ in
+                MainActor.assumeIsolated { formatters.removeAll() }
+            }
+        }
+
+        let key = "\(locale.identifier)|\(timeZone.identifier)"
+        if let existing = formatters[key] { return existing }
+
         let formatter = DateFormatter()
         formatter.locale = locale
         formatter.timeZone = timeZone
         formatter.timeStyle = .short
         formatter.dateStyle = .none
-        return "ends " + formatter.string(from: now.addingTimeInterval(max(0, remaining)))
+        formatters[key] = formatter
+        return formatter
     }
 
     /// Rounds toward zero, so a label never shows a second the player has not
