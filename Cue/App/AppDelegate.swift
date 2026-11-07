@@ -2,8 +2,11 @@
 //  AppDelegate.swift
 //  Cue
 //
-//  M0 lifecycle. Three modes:
-//    (no arguments)  status item + debug window, for watching events live
+//  Lifecycle. Normal launch shows the §4.1 panel; the rest are M0/M1
+//  diagnostics, which build their own harness and never create a panel.
+//
+//  Modes:
+//    (no arguments)  status item + floating panel
 //    --grant         raise the Automation prompt and wait for an answer, then exit
 //    --deny          same prompt, but asking for a refusal, to test §5's state
 //    --bench         time fetchState variants against each other, then exit
@@ -19,13 +22,46 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
-    private let controller = M0Controller()
+    /// The real app.
+    private var model: PlayerModel?
+    private var panel: PanelController?
     private var statusItem: StatusItemController?
-    private var debugWindow: DebugWindowController?
+
+    /// Diagnostics only, and only in a diagnostic mode. Kept separate from
+    /// PlayerModel so the two never poll Music at the same time.
+    private var diagnostics: M0Controller?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let options = LaunchOptions(arguments: CommandLine.arguments)
 
+        if options.isDiagnostic {
+            runDiagnostics(options)
+            return
+        }
+
+        let model = PlayerModel()
+        self.model = model
+
+        let panel = PanelController(model: model)
+        self.panel = panel
+
+        statusItem = StatusItemController(
+            togglePanel: { panel.toggle() },
+            quit: { NSApp.terminate(nil) }
+        )
+
+        model.start()
+        panel.show()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        model?.stop()
+        diagnostics?.stop()
+    }
+
+    private func runDiagnostics(_ options: LaunchOptions) {
+        let controller = M0Controller()
+        diagnostics = controller
         controller.start()
 
         if options.isGrant || options.isDeny {
@@ -75,25 +111,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
-
-        statusItem = StatusItemController(
-            showDebugWindow: { [weak self] in self?.presentDebugWindow() },
-            quit: { NSApp.terminate(nil) }
-        )
-
-        presentDebugWindow()
-        Task { await controller.resync(reason: "launch") }
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        controller.stop()
-    }
-
-    private func presentDebugWindow() {
-        if debugWindow == nil {
-            debugWindow = DebugWindowController(controller: controller)
-        }
-        debugWindow?.present()
     }
 }
 
@@ -116,6 +133,11 @@ struct LaunchOptions: Sendable {
     /// sequence, so a track change can be caught and timed.
     var listenSeconds: Int = 0
     var latencySamples: Int = 100
+
+    /// True for any mode that should not build a panel.
+    var isDiagnostic: Bool {
+        isProbe || isGrant || isDeny || isBench || isWatch || isDumpRecords || isTestClock
+    }
 
     init(arguments: [String]) {
         var iterator = arguments.dropFirst().makeIterator()

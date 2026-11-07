@@ -238,7 +238,7 @@ in M1 before taking that on.
 Display:
 - **Elapsed** time on the left (`m:ss`, or `h:mm:ss` when the track is 1 h or longer).
 - **Remaining** time on the right (`-m:ss`). Clicking it toggles between remaining and total duration. Persist the choice.
-- **End time:** the wall-clock time the track will finish, e.g. "ends 2:47 pm", computed as `now + remaining`. Use the user's locale and 12/24 h setting. Show it only while playing; while paused, show "paused".
+- **End time:** the wall-clock time the track will finish, e.g. "ends 2:47 PM", computed as `now + remaining`. Use the user's locale and 12/24 h setting via `DateFormatter.timeStyle = .short` rather than a hard-coded pattern — en_NZ renders an uppercase "PM" on macOS 27, so the lowercase in this spec's original example was wishful. Show it only while playing; while paused, show "paused".
 - **Track length**, available via the toggle above and also shown in the tooltip.
 
 Interaction:

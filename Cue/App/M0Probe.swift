@@ -363,18 +363,25 @@ final class M0Probe {
         }
     }
 
-    /// PlaybackClock's numeric checks. Pure arithmetic — no Music, no permission.
+    /// M1's numeric checks. Pure arithmetic — no Music, no permission.
     func runClockTests() {
         heading("PlaybackClock (§3.3, §4.2)")
 
-        let results = M1ClockTests.runAll()
+        var results = M1ClockTests.runAll()
         for result in results {
-            if result.passed {
-                pass("\(result.name) — \(result.detail)")
-            } else {
-                fail("\(result.name) — \(result.detail)")
-            }
+            result.passed ? pass("\(result.name) — \(result.detail)")
+                          : fail("\(result.name) — \(result.detail)")
         }
+
+        heading("Time formatting (§4.2)")
+        let formatResults = M1FormatTests.runAll()
+        results += formatResults
+        let _ = formatResults
+        for result in formatResults {
+            result.passed ? pass("\(result.name) — \(result.detail)")
+                          : fail("\(result.name) — \(result.detail)")
+        }
+
         emit("")
         emit("  \(results.filter(\.passed).count)/\(results.count) passed")
         printVerdict()
