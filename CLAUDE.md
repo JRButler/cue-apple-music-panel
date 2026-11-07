@@ -158,13 +158,38 @@ be polled (§3.3, §7.1).
 - On any event, ask `PlayerModel` to resync.
 
 ### 3.3 PlayerModel and PlaybackClock
+
 - `PlayerModel` (`@Observable`, `@MainActor`) holds: connection status, the current track, player state, position, shuffle, repeat, volume, favourite, and AirPlay devices.
+
+**The reads are split in two.** This is the decision taken in §7.1, forced by M0's
+measurement that one property reference costs one ~8.3 ms Apple Event on the main
+thread. Polling everything at 1 Hz would block for ~90 ms every second.
+
+- `fetchPosition()` — **the 1 Hz hot path.** `player position` alone: one
+  reference, one event, 8.3 ms median. Nothing else goes in here, ever. Adding a
+  single field to this call doubles its cost.
+- `fetchState()` — **the full sync, on notification only.** Two references via
+  `properties` records (application level, then `current track`), ~17 ms. Driven
+  by `playerInfo` (§3.2) and by explicit user action, never by the timer.
+
+Volume, shuffle and repeat therefore update on notification rather than on the
+poll. A change made inside Music with no play-state change will lag until the
+next notification; if that proves annoying in use, fold those three into a
+low-frequency secondary poll rather than into `fetchPosition()`.
+
 - **Position strategy:**
-  - While playing, poll `fetchState()` at 1 Hz.
+  - While playing, call `fetchPosition()` at 1 Hz.
   - `PlaybackClock` interpolates position from the last sync timestamp so the scrub bar moves smoothly at display refresh rate (use `TimelineView` or `CADisplayLink` equivalent).
   - If the polled and interpolated positions differ by more than 0.5 s, snap to the polled value. Otherwise, ease toward it.
   - While paused or stopped, stop polling. The notifications are enough.
   - While the panel is hidden, stop polling entirely.
+  - The interpolated clock is what the scrub bar renders, so the 8.3 ms poll is a
+    rendering stutter at worst, never a positional error.
+
+**If the stutter is visible on the real panel**, §7.1's option 3 is the fallback:
+move the hot path to `NSAppleEventDescriptor.sendEvent(options:timeout:)`, which
+is public and safe off the main thread, unlike `NSAppleScript`. Judge it by eye
+in M1 before taking that on.
 
 ---
 
@@ -502,8 +527,10 @@ meant to move at refresh rate. Four options, cheapest first:
 4. **Accept 93 ms.** Only viable if the panel turns out to feel fine, which the
    numbers suggest it will not.
 
-Option 1 is the recommendation for M1, with 3 held in reserve if the stutter is
-visible on the real panel. Either way §3.3 needs rewriting.
+**Decided: option 1.** §3.3 has been rewritten accordingly — a position-only
+1 Hz poll plus a 2-event full sync on notification. Option 3 is held in reserve
+if the stutter turns out to be visible on the real panel, which M1 should judge
+by eye.
 
 A related gain, independent of which option wins: reading `properties` records
 means parsing enum **codes** (`kPSP`, `kRpO`) rather than `player state as text`.
