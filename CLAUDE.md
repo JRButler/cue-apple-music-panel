@@ -1,0 +1,351 @@
+# CLAUDE.md — Cue (working title)
+
+A floating, always-available control panel for Apple Music on macOS. It replaces the shrunken bottom control bar in Music.app on macOS 27 with a larger, easier-to-use panel that stays on top of whatever you're working in.
+
+> **Workflow:** This spec is milestone-gated. Complete one milestone, meet its acceptance criteria, then **stop and report** before starting the next. Don't jump ahead or bundle milestones.
+
+---
+
+## 1. Goals and non-goals
+
+**Goals**
+- A large, readable floating panel with a precise scrub bar. The panel is the reason this app exists.
+- Control Music.app only through public Apple Events (its AppleScript dictionary). No private frameworks.
+- Event-driven updates where possible, light polling where not. Negligible CPU use while idle.
+- Never launch Music.app as a side effect.
+
+**Non-goals (for now)**
+- Controlling other players (Spotify, browsers). That would need the private MediaRemote framework.
+- Time-synced lyrics or the Up Next queue. Neither is exposed via scripting; we link out to Music instead.
+- Mac App Store distribution. We ship as a Developer ID–signed, notarised build, with no sandbox.
+
+---
+
+## 2. Platform and stack
+
+- macOS 27 deployment target, Apple Silicon. The dev machine is a Mac Studio (M1).
+- Swift 6 (strict concurrency), SwiftUI for views, and AppKit for the window (`NSPanel`) and the status item.
+- Xcode project, with no third-party dependencies.
+- An agent app (`LSUIElement = YES`): no Dock icon. A menu-bar status item provides show/hide, settings, and quit.
+- Hardened Runtime enabled. Entitlements:
+  - `com.apple.security.automation.apple-events` = YES
+- Info.plist:
+  - `NSAppleEventsUsageDescription`: "Cue controls playback in the Music app."
+
+---
+
+## 3. Architecture
+
+```
+Cue/
+├── App/
+│   ├── main.swift                // explicit entry point — see the note below
+│   ├── AppDelegate.swift         // lifecycle, argument parsing
+│   ├── StatusItemController.swift
+│   ├── EventLog.swift            // M0 only
+│   ├── M0Controller.swift        // M0 only
+│   ├── M0Probe.swift             // M0 only
+│   └── (M1) PanelController.swift  // NSPanel owner, frame persistence
+├── Music/
+│   ├── MusicBridge.swift         // ALL Apple Events live here
+│   ├── MusicScripts.swift        // AppleScript source strings, compiled once
+│   ├── MusicEventSource.swift    // DistributedNotificationCenter + NSWorkspace observers
+│   └── MusicTypes.swift          // TrackInfo, PlayerState, RepeatMode, AirPlayDevice
+├── State/                        // (M1)
+│   ├── PlayerModel.swift         // @Observable @MainActor single source of truth
+│   └── PlaybackClock.swift       // position interpolation between syncs
+├── UI/
+│   ├── DebugWindow.swift         // M0 only, deleted when PanelView lands
+│   └── (M1+) PanelView.swift, ScrubBar.swift, TransportControls.swift,
+│             ArtworkView.swift, AirPlayPicker.swift, VolumeControl.swift
+└── Resources/
+    ├── Info.plist
+    └── App.entitlements
+```
+
+**Entry point.** There is no `@main`. An `NSApplicationDelegate` marked `@main`
+in an `LSUIElement` app never has its lifecycle methods called — it launches,
+nothing happens, and nothing is logged. `App/main.swift` sets the delegate on
+`NSApplication.shared` by hand, sets `.accessory`, and calls `run()`.
+
+The target uses a file-system-synchronised group, so a new `.swift` file under
+`Cue/` joins the build with no change to the project file.
+
+### 3.1 MusicBridge
+- This is the **only** type that sends Apple Events. Everything else goes through its async API.
+- Compile each AppleScript once at startup (`NSAppleScript`, `compileAndReturnError`) and reuse it.
+- `NSAppleScript` must be used on the main thread. Keep every script tiny so each call stays well under 10 ms. Batch reads: a single `fetchState()` script returns all polled fields in one round trip, rather than making one call per property.
+- **Every script sets an explicit `with timeout`.** The Apple Event default is two
+  minutes and `NSAppleScript` blocks the thread it runs on, which here is always
+  the main thread — so one stalled event freezes the panel for two minutes. This
+  is not hypothetical: an unanswered Automation prompt does exactly that, and did
+  during M0. `fetchState` allows 2 s (it polls at 1 Hz, so a slower read has
+  already missed its slot); commands allow 5 s.
+- **`fetchState` returns a list, not a record.** A record with custom keys arrives
+  wrapped in a `usrf` key/value list that has to be walked pairwise; a list is
+  indexable directly. One round trip for every field is unaffected. The order is
+  fixed by `MusicBridge.StateField` and the script's `return {...}` line.
+- **The first reads in `fetchState` are deliberately not wrapped in `try`.** Only
+  genuinely absent values are: `player position` is `missing value` when stopped,
+  `current track` errors when nothing is queued, `duration` is absent on some
+  streams. Wrapping the rest would turn "we are not permitted to talk to Music"
+  into a well-formed list of empty values that reads as a stopped player — hiding
+  §5's denied state behind a plausible lie. `player state` is the canary.
+- **Guard rule:** before *any* call, check that `NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Music")` is non-empty. If Music isn't running, return `.musicNotRunning` and do not send the event. Sending `tell application "Music"` would launch it.
+- Map errors to a typed `MusicBridgeError`:
+  - `-1743` (`errAEEventNotPermitted`) and `-1744` (`errAEEventWouldRequireUserConsent`) → `.automationDenied`
+  - `-600` (`procNotFound`) / `-609` (`connectionInvalid`) → `.musicNotRunning`
+  - `-1712` (`errAETimeout`) → `.timedOut`
+  - Anything else → `.scriptError(code, message)`
+- Permission is read with `AEDeterminePermissionToAutomateTarget(…, askUserIfNeeded: false)`,
+  which is silent and separates "never asked" (`-1744`) from "refused" (`-1743`).
+  Sending a probe event cannot make that distinction, because sending is what
+  triggers the prompt.
+
+### 3.2 MusicEventSource
+- Observe the `com.apple.Music.playerInfo` distributed notification. It fires on track change and on play, pause, or stop.
+  - Register with `suspensionBehavior: .deliverImmediately`. Without it macOS
+    queues distributed notifications for an app that is not active, which for an
+    `LSUIElement` agent is almost always — the panel would update only when
+    something else brought it forward.
+  - Use the selector-based observer APIs. The block-based ones want a `@Sendable`
+    closure, which `Notification` is not, so they fight strict concurrency for no
+    gain here.
+  - In M0, **log the full `userInfo` payload** and document the real keys here. The expected keys (Name, Artist, Album, Total Time, Player State, Persistent ID) are unverified on macOS 27.
+- Observe `NSWorkspace` `didLaunchApplicationNotification` and `didTerminateApplicationNotification`, filtered to `com.apple.Music`.
+- On any event, ask `PlayerModel` to resync.
+
+### 3.3 PlayerModel and PlaybackClock
+- `PlayerModel` (`@Observable`, `@MainActor`) holds: connection status, the current track, player state, position, shuffle, repeat, volume, favourite, and AirPlay devices.
+- **Position strategy:**
+  - While playing, poll `fetchState()` at 1 Hz.
+  - `PlaybackClock` interpolates position from the last sync timestamp so the scrub bar moves smoothly at display refresh rate (use `TimelineView` or `CADisplayLink` equivalent).
+  - If the polled and interpolated positions differ by more than 0.5 s, snap to the polled value. Otherwise, ease toward it.
+  - While paused or stopped, stop polling. The notifications are enough.
+  - While the panel is hidden, stop polling entirely.
+
+---
+
+## 4. Features
+
+### 4.1 Floating panel ✅ confirmed
+- `NSPanel` with style mask `.nonactivatingPanel`, `.titled`, and `.fullSizeContentView`. The titlebar is transparent and its buttons are hidden.
+- `level = .floating` and `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]`.
+- `isMovableByWindowBackground = true`. Clicking a control must **not** activate the app or steal focus.
+- The background uses a vibrancy material (`NSVisualEffectView` / `.ultraThinMaterial`) with rounded corners.
+- Persist the frame across launches. If the saved frame is off-screen after a display change, clamp it back on-screen.
+- The panel is resizable between a minimum and maximum width; controls lay out to fit.
+
+### 4.2 Scrub bar ✅ confirmed (core feature)
+Display:
+- **Elapsed** time on the left (`m:ss`, or `h:mm:ss` when the track is 1 h or longer).
+- **Remaining** time on the right (`-m:ss`). Clicking it toggles between remaining and total duration. Persist the choice.
+- **End time:** the wall-clock time the track will finish, e.g. "ends 2:47 pm", computed as `now + remaining`. Use the user's locale and 12/24 h setting. Show it only while playing; while paused, show "paused".
+- **Track length**, available via the toggle above and also shown in the tooltip.
+
+Interaction:
+- Click anywhere on the bar to seek there.
+- Drag the thumb to scrub. While dragging, show a time bubble above the thumb with the target time. **Commit the seek only on release** (one `set player position`). Suppress clock updates during the drag so the thumb doesn't jump.
+- Hit target: at least a 20 pt tall interactive area, even if the visible track is thinner. Fixing fiddly controls is the point of the app.
+- Keyboard (when the panel is key): ← / → seek ±5 s, ⇧← / ⇧→ seek ±30 s.
+- For streaming tracks where the duration is 0 or missing, show an indeterminate bar and disable seeking.
+
+### 4.3 Album art and Now Playing info ✅ confirmed
+- Artwork preview: `raw data of artwork 1 of current track`, decoded to `NSImage`.
+  Prefer `raw data` (`pRaw`) over `data` (`pPCT`): the latter is typed `picture`,
+  the former hands back the original bytes, which `NSImage` decodes directly.
+  `artwork` also exposes `format` and `downloaded`, which are worth checking
+  before assuming a track has usable art. Display it at a minimum of 64 × 64 pt in the compact layout, scaling up with the panel, with rounded corners and a subtle shadow.
+- Cache artwork keyed by persistent ID, holding the last 20 tracks in an LRU. Fetch it on track change only, never on the 1 Hz poll.
+- Some streamed catalogue tracks return no artwork data. Show a neutral placeholder rather than an empty box. (If this happens often in M2 testing, a later option is fetching catalogue artwork via MusicKit; that's out of scope for now.)
+- Crossfade (150 ms) when the artwork changes.
+- Title, artist, and album, with each line truncating cleanly.
+- Clicking the artwork brings Music.app forward (`activate`).
+
+### 4.4 Transport ✅ confirmed
+- Layout: **previous · play/pause · next** as a centred group, with play/pause visibly larger than the buttons either side.
+- Hit targets: at least 32 pt for previous and next, and at least 44 pt for play/pause.
+- Commands: `previous track` / `playpause` / `next track`.
+- The play/pause icon reflects the actual player state, updating optimistically on click and reconciling on the next sync.
+- Previous follows Music's behaviour: more than 3 s in restarts the track.
+- Space toggles play/pause when the panel is key.
+
+### 4.5 Shuffle, repeat, favourite ⏳ proposed
+- Shuffle: read and set `shuffle enabled`.
+- Repeat: cycle off → all → one via `song repeat`.
+- Favourite: toggle the favourite property on the current track. The property is
+  **`favorited`** (code `pLov`, boolean, on `track`), confirmed in M0 — see §6.1.
+  There is also `disliked` (`pHat`), plus `album favorited` / `album disliked`.
+
+### 4.6 Volume ✅ confirmed
+- A horizontal slider bound to Music's `sound volume` (0–100). This is Music's own level, not system volume.
+- **Decent width:** at least 160 pt in the compact layout. It grows with the panel and never shrinks to an icon-sized control. The interactive height is at least 20 pt, the same as the scrub bar.
+- Speaker icons sit at each end: low on the left, high on the right. Clicking the low icon toggles mute, restoring the previous level.
+- Send updates while dragging at no more than 15 Hz, plus a final value on release.
+- Scrolling over the slider (trackpad or wheel) adjusts the volume in steps of 2.
+- Read the volume on each sync, so changes made in Music itself are reflected.
+
+### 4.6a Panel layout (compact)
+```
+┌──────────────────────────────────────────────────┐
+│ ┌──────┐  Title                                  │
+│ │ art  │  Artist — Album                         │
+│ └──────┘                                         │
+│ 1:42  ━━━━━━━━━━━━●──────────────  -2:13         │
+│                    ends 2:47 pm                  │
+│        🔀   ⏮    ⏯    ⏭   🔁                     │
+│   🔈 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 🔊             │
+└──────────────────────────────────────────────────┘
+```
+Shuffle and repeat flank the transport group once M3 lands.
+
+### 4.7 AirPlay picker ⏳ proposed
+- Popover listing `AirPlay devices` with name and kind. Multi-select sets `current AirPlay devices`.
+- Show which devices are currently selected.
+
+### 4.8 Escape hatches ⏳ proposed
+- "Lyrics" and "Up Next" buttons that bring Music.app forward. No UI scripting.
+
+### 4.9 App chrome ⏳ proposed
+- Status item menu: Show/Hide Panel, Always on Top (toggle), Launch at Login (`SMAppService.mainApp`), Settings…, Quit.
+- Optional global hotkey to toggle the panel.
+- Setting: hide the panel automatically when Music isn't running.
+
+---
+
+## 5. States and errors
+
+| State | Panel shows |
+|---|---|
+| Music not running | Placeholder: "Music isn't open" with an **Open Music** button (the only place we launch it) |
+| Automation denied | "Cue needs permission to control Music" with a button that opens System Settings → Privacy & Security → Automation |
+| Stopped / nothing queued | Placeholder artwork, empty bar, transport enabled |
+| Streaming track with no duration | Indeterminate bar, seeking disabled |
+
+---
+
+## 5a. Building and running
+
+```sh
+xcodebuild -project Cue.xcodeproj -scheme Cue -configuration Debug build
+tools/run-probe.sh [--listen <seconds>] [--samples <n>]   # M0 measurement sequence
+```
+
+Debug builds are signed with Developer ID, not ad-hoc, and that is deliberate.
+Automation access is granted to a code signature, so a stable signing identity
+means the grant survives a rebuild; ad-hoc signing changes the designated
+requirement every build and macOS re-prompts each time.
+
+**Launch the app with `open`, never by executing the binary.** macOS attributes
+an Automation request to the *responsible process* of whatever sends it. A binary
+started from a shell inherits the terminal as responsible, so the request is
+refused with no prompt and no TCC entry for Cue ever appears — it looks exactly
+like a bug in the bridge. `tools/run-probe.sh` uses `open -n -W` so launchd
+starts it and Cue is its own responsible process. Because `open` leaves the app
+no usable stdout, the probe also writes to `~/Library/Logs/Cue/`.
+
+Logs: `~/Library/Logs/Cue/m0-debug.log` (every event) and
+`m0-probe-report.txt` (the last probe run, truncated each time).
+
+### Renaming the app
+
+"Cue" is a working title (§7). It is confined to:
+
+1. the `Cue/` source folder and the `path = Cue;` line in `project.pbxproj`
+2. `Cue.xcodeproj/` and its scheme file
+3. `PRODUCT_BUNDLE_IDENTIFIER` (`nz.slstudio.Cue`) in both build configurations
+4. `NSAppleEventsUsageDescription` in `Info.plist`
+
+No Swift file hard-codes the name; code reads `Bundle.main` instead. Note that
+changing the bundle id resets the Automation grant, so the prompt returns once.
+
+---
+
+## 6. Milestones
+
+### M0 — Bridge spike (no UI beyond a debug window)
+- Write `MusicBridge` with `fetchState()`, `playPause()`, `next()`, `previous()`, and `seek(to:)`.
+- Write `MusicEventSource`, and log raw notification payloads to the console.
+- Handle the first-run Automation permission prompt and the denied state.
+- Write `fetchState()` latency, the notification keys, and the favourite property name into this file.
+
+**Acceptance criteria**
+- Track changes are logged within 200 ms.
+- Music is never launched by Cue.
+- Denied permission is detected and reported.
+- Measured `fetchState()` latency is recorded in this file.
+
+#### 6.1 M0 findings
+
+Measured on a Mac Studio (M1), macOS 27.0.1 (26A434), Xcode 27.1.
+
+**Favourite property — settled.** `favorited`, code `pLov`, boolean, on `track`
+(inherited by `current track`). The macOS 27.0.1 scripting definition has no
+`loved` property at all. Also present: `disliked` (`pHat`), `album favorited`
+(`pALv`), `album disliked` (`pAHt`).
+
+**`persistent ID` — settled.** Not declared on `track`; inherited from the `item`
+class, so `persistent ID of current track` is valid. §4.3's artwork cache can key
+on it, but it comes back empty for some streamed catalogue tracks, so treat an
+empty value as "no stable key" rather than assuming uniqueness.
+
+**AppleScript does not resolve property names at compile time.** `osacompile`
+accepts `get flurgle42 of current track` without complaint, so a compile check
+says nothing about whether a term exists — unknown identifiers are deferred to
+runtime. Verify terminology against the `sdef`, or by sending the event; not by
+compiling. (This is also why probing `favorited` and `loved` in one script is
+safe: the absent one errors at runtime where `on error` catches it.)
+
+**The default Apple Event timeout will freeze the UI.** Two minutes, on the main
+thread. Found the hard way: with an Automation prompt waiting unanswered, a
+`fetchState()` call blocked for the full two minutes and returned `-1712`. Every
+script now carries an explicit `with timeout` — see §3.1.
+
+**Still to record (needs a granted permission and a playing track):**
+
+- [ ] `fetchState()` latency. The figure measured while the connection was being
+      refused (median 7.3 ms, p95 9.9 ms over 100 samples) is **not valid** — each
+      property read was failing, not reading, so it timed refusals. Re-measure.
+- [ ] The real `com.apple.Music.playerInfo` `userInfo` keys. The expected set
+      (Name, Artist, Album, Total Time, Player State, Persistent ID) is still
+      unverified on macOS 27; `tools/run-probe.sh --listen 30` surveys and prints
+      whatever actually arrives.
+- [ ] Worst notification-to-logged interval, against the 200 ms criterion.
+- [ ] The §3.1 guard exercised with Music closed (the probe skips this check while
+      Music is running, since the guard cannot be tested against a running app).
+
+### M1 — Panel and scrub bar
+- Build the floating panel (§4.1) and the full scrub bar (§4.2).
+- Show minimal title and artist text only; artwork comes in M2.
+
+**Acceptance criteria**
+- The scrub bar moves smoothly and stays within 0.5 s of Music.
+- Dragging commits exactly one seek.
+- The end time is correct and updates after a pause and resume.
+- Using the panel never steals focus from the frontmost app.
+- Idle CPU use is under 1% while paused.
+
+### M2 — Album art, transport, volume
+- Implement §4.3, §4.4, and §4.6, using the layout in §4.6a.
+
+**Acceptance criteria**
+- Artwork appears within 300 ms of a track change, with a placeholder when none is available.
+- The transport buttons work and the play/pause icon matches Music's state, including changes made in Music itself.
+- Volume dragging is smooth and a change made in Music is reflected within 1 s.
+
+### M3 — Shuffle, repeat, favourite
+- Implement §4.5.
+
+### M4 — AirPlay
+- Implement §4.7.
+
+### M5 — Polish
+- Implement §4.8 and §4.9.
+- Add Developer ID signing and notarisation.
+
+---
+
+## 7. Open questions
+- Final name.
+- Visual direction: minimal glass, or something with more character?
+- Should we ever support non-Music players via MediaRemote? This is out of scope unless decided otherwise.
