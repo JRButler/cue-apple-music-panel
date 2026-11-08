@@ -15,30 +15,8 @@ struct PanelView: View {
 
     let model: PlayerModel
 
-    /// Width at which the volume control can share the title's line.
-    ///
-    /// Below it there is not enough room for both: §4.6 sets a 160 pt floor on
-    /// the volume track, plus two 20 pt speaker icons and their gaps is 216 pt,
-    /// and with 24 pt of padding and the 74 pt artwork column that leaves the
-    /// title under 60 pt at minimum width. So the volume moves to its own row
-    /// instead of either control being squeezed.
-    static let sideBySideWidth: CGFloat = 470
-
     var body: some View {
-        // The arrangement is chosen from the width in the SAME layout pass that
-        // uses it. An earlier version kept the width in @State fed by
-        // onGeometryChange, which lags the real size by a frame: during a live
-        // resize the content laid itself out for the previous width and then
-        // corrected, which read as the whole panel squashing vertically until
-        // the mouse was released.
-        GeometryReader { proxy in
-            panel(width: proxy.size.width)
-        }
-    }
-
-    private func panel(width: CGFloat) -> some View {
-        let isWide = width >= Self.sideBySideWidth
-        return ZStack {
+        ZStack {
             // §4.1: the panel is movable by its background. This has to sit
             // behind everything, and the vibrancy above it has to decline hit
             // testing, or a press on the background never reaches it. See
@@ -54,18 +32,18 @@ struct PanelView: View {
                 )
                 .allowsHitTesting(false)
 
-            content(isWide: isWide, width: width)
+            content
                 .padding(.horizontal, 14)
-                .padding(.vertical, 12)
+                .padding(.vertical, PanelMetrics.padding)
         }
         .environment(\.playerModel, model)
-        // No minHeight: the window's height is authoritative, and asking for
-        // more than it has is the other half of what caused the squash.
+        // The window's size is authoritative; asking for more than it has is
+        // what made a live resize look like the panel was squashing.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder
-    private func content(isWide: Bool, width: CGFloat) -> some View {
+    private var content: some View {
         switch model.connection {
         case .musicNotRunning:
             Placeholder(
@@ -92,48 +70,53 @@ struct PanelView: View {
             )
 
         case .connected:
-            connected(isWide: isWide, width: width)
+            connected
         }
     }
 
-    private func connected(isWide: Bool, width: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Top row: artwork, then the title and artist/album lines, and — if
-            // the panel is wide enough — the volume control on the same line.
-            HStack(alignment: .top, spacing: 10) {
-                ArtworkView(
-                    image: model.artwork,
-                    trackKey: model.track?.id ?? "none",
-                    onActivate: { model.activateMusic() }
-                )
-
-                NowPlayingLines(track: model.track, onActivate: { model.activateMusic() })
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(maxHeight: ArtworkView.minimumSize, alignment: .top)
-
-                if isWide {
-                    volumeControl
-                        .frame(width: volumeZoneWidth(for: width))
-                }
-            }
-
-            // Transport sits directly above the scrub bar, centred.
-            TransportControls(
-                isPlaying: model.playerState.isAdvancing,
-                isEnabled: model.connection == .connected,
-                onPrevious: { Task { await model.previousTrack() } },
-                onPlayPause: { Task { await model.togglePlayPause() } },
-                onNext: { Task { await model.nextTrack() } }
+    /// Artwork on the left as a full-height square, everything else stacked
+    /// beside it. Putting the art in its own column rather than its own row is
+    /// what lets the panel be shorter: the title, transport and scrub bar share
+    /// the vertical space the art used to sit above.
+    private var connected: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ArtworkView(
+                image: model.artwork,
+                trackKey: model.track?.id ?? "none",
+                size: PanelMetrics.artworkSize,
+                onActivate: { model.activateMusic() }
             )
 
-            scrubBar
+            VStack(alignment: .leading, spacing: PanelMetrics.rowGap) {
+                // Title and artist, with the volume beside them when there is room.
+                HStack(alignment: .top, spacing: 12) {
+                    NowPlayingLines(track: model.track, onActivate: { model.activateMusic() })
+                        .frame(minWidth: PanelMetrics.titleMinimum, maxWidth: .infinity, alignment: .leading)
 
-            // Narrow panels give the volume its own row rather than squeezing it.
-            if !isWide {
-                volumeControl
+                    // Always on the title's line. The minimum width guarantees
+                    // room for it, so it never has to move.
+                    volumeControl
+                        .frame(
+                            minWidth: PanelMetrics.volumeZoneMinimum,
+                            maxWidth: PanelMetrics.volumeZoneMaximum
+                        )
+                }
+
+                // Transport sits directly above the scrub bar, centred, and
+                // takes the slack the artwork row used to occupy.
+                TransportControls(
+                    isPlaying: model.playerState.isAdvancing,
+                    isEnabled: model.connection == .connected,
+                    onPrevious: { Task { await model.previousTrack() } },
+                    onPlayPause: { Task { await model.togglePlayPause() } },
+                    onNext: { Task { await model.nextTrack() } }
+                )
+
+                scrubBar
             }
         }
     }
+
 
     private var volumeControl: some View {
         VolumeControl(
@@ -150,10 +133,6 @@ struct PanelView: View {
 
     /// Roughly half the width left over after the artwork column, bounded so it
     /// neither drops under §4.6's floor nor crowds out the title.
-    private func volumeZoneWidth(for width: CGFloat) -> CGFloat {
-        let available = width - 24 - (ArtworkView.minimumSize + 10)
-        return min(320, max(216, available * 0.5))
-    }
 
     /// §4.2 renders the interpolated clock, not the last polled value, which is
     /// what lets a 1 Hz poll drive a bar that moves smoothly.
@@ -196,7 +175,7 @@ private struct NowPlayingLines: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         // Drags the panel; a double-click still opens Music.
-        .windowDraggable(clickCount: 2, onClick: onActivate)
+        .windowDraggable(requiredClicks: 2, onClick: onActivate)
         .help(track == nil ? "Drag to move" : "Double-click to show in Music, drag to move")
     }
 

@@ -26,25 +26,15 @@ final class PanelController: NSObject, NSWindowDelegate {
                                 category: "Focus")
 
     private static let frameKey = "PanelFrame"
-    /// The content height, which depends on the layout the width selects.
-    ///
-    /// Wide — volume shares the title's line:
-    ///     padding 24 + artwork 64 + transport 46 + scrub 40 + 2 gaps 16 = 190
-    /// Narrow — volume gets its own row:
-    ///     the above + a gap and the volume row, 8 + 22                 = 220
-    ///
-    /// Checked at launch against the hosting view's own fitting size, and logged
-    /// if they disagree: an arithmetic slip here clips the bottom control off,
-    /// and the volume slider is the one that goes.
-    static let wideContentHeight: CGFloat = 190
-    static let narrowContentHeight: CGFloat = 220
+    /// One height, shared with the layout via PanelMetrics. The panel resizes
+    /// horizontally only.
+    static var contentHeight: CGFloat { PanelMetrics.contentHeight }
 
-    static func contentHeight(forWidth width: CGFloat) -> CGFloat {
-        width >= PanelView.sideBySideWidth ? wideContentHeight : narrowContentHeight
-    }
+    private static var defaultSize: NSSize { NSSize(width: 640, height: contentHeight) }
+    /// Wide enough that §4.6's volume control always fits beside the artwork
+    /// and a readable title, so neither ever has to move or shrink.
+    private static var minWidth: CGFloat { PanelMetrics.minimumWidth }
 
-    private static let defaultSize = NSSize(width: 520, height: wideContentHeight)
-    private static let minWidth: CGFloat = 360
     private static let maxWidth: CGFloat = 900
 
     var isVisible: Bool { panel.isVisible }
@@ -64,35 +54,33 @@ final class PanelController: NSObject, NSWindowDelegate {
 
         configure()
 
-        // `sizingOptions = []` detaches the hosting view from the window's Auto
-        // Layout. By default it publishes the SwiftUI content's intrinsic size,
-        // so every label whose text changes invalidates the window's layout and
-        // provokes a full `-[NSWindow layoutIfNeeded]` pass — once a second, at
-        // enough cost to dominate the panel's CPU while playing. The panel's size
-        // is the user's to set (§4.1 makes it resizable), so nothing is lost.
         let hostingView = NSHostingView(rootView: PanelView(model: model))
-        // Publishes the content's minimum size so AppKit has something to
-        // constrain against. This was `[]` during the M1 CPU investigation,
-        // which turned out to make no measurable difference either way (3.5%)
-        // while removing the only thing stopping the panel being resized
-        // smaller than its own controls.
-        hostingView.sizingOptions = [.minSize]
+
+        // `sizingOptions = []` and an autoresizing mask, deliberately, rather
+        // than the two mixed.
+        //
+        // `.minSize` publishes an Auto Layout constraint for the content's
+        // minimum, and combining that with a springs-and-struts mask gives two
+        // systems an opinion about the same frame. During a live resize they
+        // disagree for a frame at a time and the content is momentarily
+        // compressed — the panel appears to squash vertically until the mouse
+        // is released.
+        //
+        // Nothing is lost by dropping the constraint: `windowWillResize`
+        // enforces the width range and the fixed height itself, which is a
+        // stronger guarantee than the content's own minimum ever was.
+        hostingView.sizingOptions = []
+        hostingView.translatesAutoresizingMaskIntoConstraints = true
         hostingView.autoresizingMask = [.width, .height]
         panel.contentView = hostingView
+        hostingView.frame = panel.contentLayoutRect
 
-        // Catch an arithmetic slip in contentHeight rather than ship a clipped
-        // panel. fittingSize can report 0 before layout, so only a positive
-        // value is trusted.
-        let fitting = hostingView.fittingSize
-        let expected = Self.contentHeight(forWidth: panel.frame.width)
-        if fitting.height > expected + 0.5 {
-            let message = String(
-                format: "LAYOUT: content wants %.1fpt but height is %.1fpt — bottom control will clip",
-                fitting.height, expected
-            )
-            logger.warning("\(message, privacy: .public)")
-        }
         panel.setFrame(Self.restoredFrame(), display: false)
+
+        // Must be set, and must be set here: `windowWillResize` is the only
+        // thing holding the panel to one height per layout, and without a
+        // delegate it is never called. Losing this line let the panel be
+        // dragged to any height and stopped the saved frame being restored.
         panel.delegate = self
     }
 
@@ -127,8 +115,8 @@ final class PanelController: NSObject, NSWindowDelegate {
         // detaches the hosting view from Auto Layout and so removes the
         // content's own minimum. `windowWillResize` below is the clamp that
         // actually holds; these are belt and braces.
-        panel.minSize = NSSize(width: Self.minWidth, height: Self.wideContentHeight)
-        panel.maxSize = NSSize(width: Self.maxWidth, height: Self.narrowContentHeight)
+        panel.minSize = NSSize(width: Self.minWidth, height: Self.contentHeight)
+        panel.maxSize = NSSize(width: Self.maxWidth, height: Self.contentHeight)
 
         // §4.2's keyboard, wired even though the focus contract above makes it
         // hard to reach. It costs nothing and works if the panel is ever key.
@@ -166,6 +154,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         model.setPanelVisible(true)
     }
 
+
     func hide() {
         panel.orderOut(nil)
         model.setPanelVisible(false)
@@ -178,13 +167,14 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// The clamp that actually holds. Every resize, from any edge or corner,
     /// arrives here, so the panel cannot be made narrower than its controls nor
     /// any height but the one its content needs.
+    /// Horizontal resizing only, between the minimum and maximum widths. The
+    /// height is fixed, so every resize comes back to the same number whichever
+    /// edge or corner it was dragged from.
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
-        let width = min(max(frameSize.width, Self.minWidth), Self.maxWidth)
-        // The height follows from the width, because crossing
-        // PanelView.sideBySideWidth moves the volume control onto or off the
-        // title's line. The panel therefore changes height as it crosses that
-        // threshold, which is the layout change made visible.
-        return NSSize(width: width, height: Self.contentHeight(forWidth: width))
+        NSSize(
+            width: min(max(frameSize.width, Self.minWidth), Self.maxWidth),
+            height: Self.contentHeight
+        )
     }
 
     // MARK: - Frame persistence (§4.1)
@@ -203,7 +193,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         let frame = NSRectFromString(stored)
         guard frame.width > 0, frame.height > 0 else { return defaultFrame() }
         var result = clamped(frame)
-        result.size.height = contentHeight(forWidth: result.width)
+        result.size.height = contentHeight
         return result
     }
 

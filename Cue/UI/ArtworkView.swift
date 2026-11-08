@@ -2,10 +2,11 @@
 //  ArtworkView.swift
 //  Cue
 //
-//  §4.3's artwork. 64 pt minimum in the compact layout, growing with the panel,
-//  rounded with a subtle shadow, crossfading over 150 ms on a track change, and
-//  falling back to a neutral placeholder — which is not an edge case, since some
-//  streamed catalogue tracks carry no artwork at all.
+//  §4.3's artwork, as a square panel filling the left-hand end of the layout.
+//  Well above §4.3's 64 pt minimum, rounded with a subtle shadow, crossfading
+//  over 150 ms on a track change, and falling back to a neutral placeholder —
+//  which is not an edge case, since some streamed catalogue tracks carry no
+//  artwork at all.
 //
 
 import SwiftUI
@@ -16,12 +17,18 @@ struct ArtworkView: View {
     /// Changes on a track change, and is what the crossfade keys on. Using the
     /// image itself would not work: two tracks can both have no artwork.
     let trackKey: String
+    /// The square's side. Driven by the panel's height, so the art fills the
+    /// left-hand end.
+    let size: CGFloat
     let onActivate: () -> Void
 
-    /// §4.3's floor. The panel scales this up as it grows.
+    /// §4.3's floor, which the layout now comfortably exceeds.
     static let minimumSize: CGFloat = 64
+    /// Beyond this the square starts to dominate a tall, narrow panel.
+    static let maximumSize: CGFloat = 132
 
-    private let cornerRadius: CGFloat = 6
+    /// Scaled with the square so it reads as a panel rather than a thumbnail.
+    private var cornerRadius: CGFloat { max(6, size * 0.07) }
 
     var body: some View {
         ZStack {
@@ -33,19 +40,19 @@ struct ArtworkView: View {
                     .transition(.opacity)
             }
         }
-        .frame(width: Self.minimumSize, height: Self.minimumSize)
+        .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .strokeBorder(.white.opacity(0.1))
         )
-        .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+        .shadow(color: .black.opacity(0.28), radius: 4, y: 1)
         // §4.3: 150 ms crossfade.
         .animation(.easeInOut(duration: 0.15), value: trackKey)
         .contentShape(Rectangle())
         // §4.3: clicking brings Music forward — and §4.1: dragging here moves
         // the panel. See WindowDragging for why both need one gesture.
-        .windowDraggable(onClick: onActivate)
+        .windowDraggable(requiredClicks: 1, onClick: onActivate)
         .help("Click to show in Music, drag to move")
         .accessibilityLabel(image == nil ? "No artwork" : "Album artwork")
     }
@@ -55,7 +62,7 @@ struct ArtworkView: View {
             .fill(.quaternary)
             .overlay(
                 Image(systemName: "music.note")
-                    .font(.system(size: Self.minimumSize * 0.34, weight: .light))
+                    .font(.system(size: size * 0.3, weight: .light))
                     .foregroundStyle(.tertiary)
             )
     }

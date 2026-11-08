@@ -2,104 +2,103 @@
 //  WindowDragging.swift
 //  Cue
 //
-//  §4.1: the panel is movable by its background. Two mechanisms are needed,
-//  because two different problems are being solved.
+//  §4.1: the panel is movable by its background. Two cases, two mechanisms.
 //
-//  `WindowDragArea` handles genuinely empty background: an NSView reporting
+//  `WindowDragArea` covers genuinely empty background: an NSView reporting
 //  `mouseDownCanMoveWindow`, sitting behind content that declines hit testing.
 //
-//  This file handles the other case — a view that must ALSO respond to clicks.
-//  The artwork opens Music, the title lines open Music on a double-click, and
-//  both should still drag the panel. AppKit cannot do both: once a view says a
-//  press may move the window, the press never reaches the view. So the drag is
-//  driven by hand and a press that never travels far enough is treated as a
-//  click instead.
+//  `WindowDragHandle` covers a view that must ALSO respond to clicks — the
+//  artwork opens Music, the title lines open it on a double-click, and both
+//  should still drag the panel. AppKit cannot do both on its own: once a view
+//  says a press may move the window, that press never reaches the view.
+//
+//  The drag is handed to `performDrag(with:)` rather than driven from SwiftUI's
+//  DragGesture, and that matters. A DragGesture reports its translation in the
+//  view's own coordinate space, and that space moves with the window — so
+//  moving the window changes the reported translation, which moves the window
+//  again. The result is a visible feedback loop: the panel lags the pointer and
+//  pops about. `performDrag` runs AppKit's own drag loop against screen
+//  coordinates and has no such problem.
+//
+//  Click detection falls out of it for free: `performDrag` returns once the
+//  mouse is released, so a press that left the window where it started was a
+//  click rather than a drag.
 //
 
 import AppKit
 import SwiftUI
 
-/// Hands back the NSWindow hosting a SwiftUI view, so a gesture can move it.
-private struct WindowReader: NSViewRepresentable {
-    let onResolve: (NSWindow?) -> Void
+/// Empty background: a press here moves the panel.
+struct WindowDragArea: NSViewRepresentable {
 
-    func makeNSView(context: Context) -> NSView {
-        let view = ReaderView()
-        view.onResolve = onResolve
-        return view
-    }
+    func makeNSView(context: Context) -> NSView { DragView() }
 
     func updateNSView(_ nsView: NSView, context: Context) {}
 
-    final class ReaderView: NSView {
-        var onResolve: ((NSWindow?) -> Void)?
+    final class DragView: NSView {
+        override var mouseDownCanMoveWindow: Bool { true }
 
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            onResolve?(window)
+        override func mouseDown(with event: NSEvent) {
+            window?.performDrag(with: event)
         }
-
-        /// Purely a probe; it must never take a click.
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }
 
-/// Drags the panel, while still delivering clicks that did not travel.
-private struct DraggableWithClick: ViewModifier {
+/// A view that both drags the panel and reports clicks that did not drag it.
+struct WindowDragHandle: NSViewRepresentable {
 
-    let clickCount: Int
+    /// Clicks of at least this many taps trigger `onClick`. 1 for the artwork,
+    /// 2 for the title lines.
+    let requiredClicks: Int
     let onClick: () -> Void
 
-    /// How far a press may travel and still count as a click.
-    private let slop: CGFloat = 3
+    func makeNSView(context: Context) -> HandleView {
+        let view = HandleView()
+        view.requiredClicks = requiredClicks
+        view.onClick = onClick
+        return view
+    }
 
-    @State private var window: NSWindow?
-    @State private var originAtStart: CGPoint?
-    @State private var travelled: CGFloat = 0
+    func updateNSView(_ nsView: HandleView, context: Context) {
+        nsView.requiredClicks = requiredClicks
+        nsView.onClick = onClick
+    }
 
-    func body(content: Content) -> some View {
-        content
-            .background(WindowReader { window = $0 })
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        guard let window else { return }
-                        if originAtStart == nil {
-                            originAtStart = window.frame.origin
-                            travelled = 0
-                        }
-                        guard let start = originAtStart else { return }
-                        travelled = max(travelled, hypot(value.translation.width, value.translation.height))
-                        guard travelled > slop else { return }
-                        // SwiftUI's y grows downward, an NSWindow origin upward.
-                        window.setFrameOrigin(CGPoint(
-                            x: start.x + value.translation.width,
-                            y: start.y - value.translation.height
-                        ))
-                    }
-                    .onEnded { value in
-                        let moved = max(travelled, hypot(value.translation.width, value.translation.height)) > slop
-                        originAtStart = nil
-                        travelled = 0
-                        // A press that stayed put was a click, not a drag.
-                        if !moved, clickCount == 1 {
-                            onClick()
-                        }
-                    }
-            )
-            // A double-click target keeps its own gesture: the drag above only
-            // claims single presses that did not travel.
-            .onTapGesture(count: clickCount == 1 ? 2 : clickCount) {
-                if clickCount != 1 { onClick() }
+    final class HandleView: NSView {
+        var requiredClicks = 1
+        var onClick: (() -> Void)?
+
+        /// How far the window may end up from where it started and still count
+        /// as not having been dragged.
+        private let slop: CGFloat = 2
+
+        override func mouseDown(with event: NSEvent) {
+            guard let window else { return }
+
+            let clicks = event.clickCount
+            let before = window.frame.origin
+
+            // AppKit's own drag loop. Returns on mouse-up.
+            window.performDrag(with: event)
+
+            let after = window.frame.origin
+            let moved = hypot(after.x - before.x, after.y - before.y) > slop
+
+            if !moved, clicks >= requiredClicks {
+                onClick?()
             }
+        }
+
+        override func resetCursorRects() {
+            // Nothing: the default arrow is right for both dragging and clicking.
+        }
     }
 }
 
 extension View {
-    /// Makes a view drag the panel, while a press that does not travel still
-    /// counts as a click. `clickCount` of 1 fires on release; 2 uses a tap
-    /// gesture, leaving single presses to the drag.
-    func windowDraggable(clickCount: Int = 1, onClick: @escaping () -> Void) -> some View {
-        modifier(DraggableWithClick(clickCount: clickCount, onClick: onClick))
+    /// Makes a view drag the panel, while a press that did not move it still
+    /// counts as a click.
+    func windowDraggable(requiredClicks: Int = 1, onClick: @escaping () -> Void) -> some View {
+        overlay(WindowDragHandle(requiredClicks: requiredClicks, onClick: onClick))
     }
 }

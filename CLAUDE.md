@@ -238,7 +238,18 @@ in M1 before taking that on.
 Display:
 - **Elapsed** time on the left (`m:ss`, or `h:mm:ss` when the track is 1 h or longer).
 - **Remaining** time on the right (`-m:ss`). Clicking it toggles between remaining and total duration. Persist the choice.
-- **End time:** the wall-clock time the track will finish, e.g. "ends 2:47 PM", computed as `now + remaining`. Use the user's locale and 12/24 h setting via `DateFormatter.timeStyle = .short` rather than a hard-coded pattern — en_NZ renders an uppercase "PM" on macOS 27, so the lowercase in this spec's original example was wishful. Show it only while playing; while paused, show "paused".
+- **End time:** the wall-clock time the track will finish, computed as
+  `now + remaining`, using the user's locale and 12/24 h setting via
+  `DateFormatter.timeStyle = .short` rather than a hard-coded pattern. (en_NZ
+  renders an uppercase "PM" on macOS 27, so the lowercase in this spec's
+  original example was wishful.)
+
+  **Moved to the tooltip in M2, at Julian's request.** It had a line of its own
+  under the scrub bar, which cost 17 pt of panel height — about a tenth of the
+  panel — for something read occasionally. It now appears in the trailing
+  label's tooltip alongside the track length, and shows "paused" there when
+  stopped. The panel shrank from 164 pt to 147 pt as a result, and the artwork
+  square grew into the saved space proportionally.
 - **Track length**, available via the toggle above and also shown in the tooltip.
 
 Interaction:

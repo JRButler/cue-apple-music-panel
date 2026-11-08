@@ -77,13 +77,10 @@ struct ScrubBar: View {
     private var isSeekable: Bool { duration > 0 }
 
     var body: some View {
-        VStack(spacing: 3) {
-            HStack(alignment: .center, spacing: 10) {
-                elapsedLabel
-                trackArea
-                trailingLabel
-            }
-            endTimeLabel
+        HStack(alignment: .center, spacing: 10) {
+            elapsedLabel
+            trackArea
+            trailingLabel
         }
     }
 
@@ -121,9 +118,21 @@ struct ScrubBar: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(isSeekable
-              ? "Track length \(TimeFormatting.total(duration)) — click to switch"
-              : "This track has no duration")
+        .help(trailingHelp)
+    }
+
+    /// §4.2's end time lives here now rather than on a line of its own, which
+    /// cost more vertical space than it earned.
+    private var trailingHelp: String {
+        guard isSeekable else { return "This track has no duration" }
+        var parts = ["Track length \(TimeFormatting.total(duration))"]
+        if isPlaying {
+            parts.append(TimeFormatting.endTime(remaining: max(0, duration - displayPosition())))
+        } else {
+            parts.append("paused")
+        }
+        parts.append("click to switch")
+        return parts.joined(separator: " — ")
     }
 
     private var trailingText: String {
@@ -134,19 +143,7 @@ struct ScrubBar: View {
         return TimeFormatting.remaining(max(0, duration - displayPosition()), trackDuration: duration)
     }
 
-    /// §4.2: the wall-clock finish time while playing, "paused" otherwise.
-    private var endTimeLabel: some View {
-        Text(endTimeText)
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
-            .frame(maxWidth: .infinity, alignment: .center)
-    }
 
-    private var endTimeText: String {
-        guard isSeekable else { return isPlaying ? "live" : "paused" }
-        guard isPlaying else { return "paused" }
-        return TimeFormatting.endTime(remaining: max(0, duration - displayPosition()))
-    }
 
     // MARK: - Track
 
