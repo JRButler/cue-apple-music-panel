@@ -37,8 +37,10 @@ struct PanelView: View {
                 // One inset on every side. The artwork's own top nudge is
                 // already folded into it, so the square sits with an equal
                 // margin all round rather than 3 pt tighter at the bottom.
-                .padding(.horizontal, PanelMetrics.edgeInset)
-                .padding(.vertical, PanelMetrics.margin)
+                // Genuinely uniform now: the artwork is the tallest element in
+                // the row and carries no nudge of its own, so this inset is its
+                // margin on all four sides.
+                .padding(PanelMetrics.edgeInset)
         }
         .environment(\.playerModel, model)
         // The window's size is authoritative; asking for more than it has is
@@ -93,11 +95,7 @@ struct PanelView: View {
                 size: PanelMetrics.artworkSize,
                 onActivate: { model.activateMusic() }
             )
-            // A Text view's box starts a little above its glyphs, so a square
-            // whose edge is level with that box reads as sitting slightly high.
-            // This nudges the art down to line up with the title optically
-            // rather than geometrically.
-            .padding(.top, PanelMetrics.artworkTopNudge)
+
 
             VStack(alignment: .leading, spacing: PanelMetrics.rowGap) {
                 // Title and artist, with the volume beside them when there is room.
@@ -126,6 +124,12 @@ struct PanelView: View {
 
                 scrubBar
             }
+            // The optical nudge is applied HERE, to the text column, not to the
+            // artwork. A Text view's box starts a little above its glyphs, so
+            // the two only look level if the text rises slightly. Nudging the
+            // square down instead is what left its bottom margin narrower than
+            // its top while the sides looked correct.
+            .padding(.top, -PanelMetrics.artworkTopNudge)
             // Measures what the stack actually renders at, rather than what my
             // arithmetic in PanelMetrics predicts. Two separate off-by-a-few
             // errors have clipped the bottom of this panel.

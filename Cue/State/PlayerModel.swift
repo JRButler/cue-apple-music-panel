@@ -84,6 +84,10 @@ final class PlayerModel {
     /// rather than against `track`, which the notification path updates
     /// optimistically and so cannot be used to detect a change.
     private var artworkKey: String?
+    /// The track the clock was last anchored for. Same reasoning as
+    /// `artworkKey`: comparing against `track` cannot detect a change the
+    /// notification path has already applied.
+    private var appliedTrackKey: String?
 
     /// §4.6: a drag owns the volume until released, so a sync must not fight it.
     private var isAdjustingVolume = false
@@ -171,6 +175,12 @@ final class PlayerModel {
     }
 
     private func apply(_ state: MusicState) {
+        // Keyed against what was last applied, not against `track`: the
+        // notification path sets `track` optimistically, so comparing with it
+        // always reports "unchanged". Same trap that stopped the artwork
+        // loading.
+        let trackChanged = state.track?.id != appliedTrackKey
+        appliedTrackKey = state.track?.id
 
         playerState = state.playerState
         track = state.track
