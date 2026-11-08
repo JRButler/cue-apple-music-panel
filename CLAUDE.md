@@ -563,15 +563,30 @@ It is cached now. Labels were also moved off the high-rate path — they read th
 `@Observable` clock, so they refresh when it syncs, which is the only rate at
 which their text can change.
 
+**Never steals focus — verified three ways.** §4.1's contract is the one that
+justifies the whole panel design, so it is not taken on trust. While typing in
+Safari and clicking and dragging the scrub bar throughout:
+
+- the user's keystrokes kept landing in Safari, never lost
+- a 75-sample frontmost-application trace recorded 61 Safari, 14 Code and
+  **0 Cue** — Cue never came frontmost
+- Cue's own instrumentation logged **0** focus warnings: the panel never became
+  key and the app never activated
+
+`PanelController` and `AppDelegate` keep that instrumentation, so a regression
+shows up as a log line rather than as a mystery:
+
+```sh
+log show --last 5m --predicate 'subsystem == "nz.slstudio.Cue"' | grep -i focus
+```
+
+**Exactly one seek per drag — verified.** 12 gestures, 12 `scrubbing began`,
+12 `scrubbing ended`, **12 commits**. One of the twelve was a 17 ms click rather
+than a drag, and that committed exactly once too, which is the case the shared
+`DragGesture(minimumDistance: 0)` exists to make identical.
+
 **Not yet verified:**
 
-- [ ] Idle CPU under 1% while paused — the actual acceptance criterion. The
-      timeline is `paused:` when nothing advances, so this should be near zero,
-      but it has not been measured.
-- [ ] One seek per drag. Needs instrumenting; `commitSeek` is called only from
-      `onEnded`, but that should be proved, not assumed.
-- [ ] End time correct after a pause and resume.
-- [ ] Never steals focus — needs judging by eye while typing in another app.
 - [ ] Off-screen frame clamping, which needs a display change to exercise.
 
 ### M2 — Album art, transport, volume

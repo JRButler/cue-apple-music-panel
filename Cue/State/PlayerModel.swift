@@ -226,12 +226,31 @@ final class PlayerModel {
         pollTask = nil
     }
 
+    /// Worst gap seen between what the clock was rendering and what Music
+    /// actually reported. This is M1's "stays within 0.5 s of Music" criterion
+    /// measured against the real app, rather than against a simulation.
+    private(set) var worstDriftSeconds: TimeInterval = 0
+
     /// One hot-path read. Only `player position` — see the note at the top.
     private func tick() async {
         // §4.2: a drag owns the position until it is committed.
         guard !clock.isSuppressed else { return }
         do {
             if let position = try await bridge.fetchPosition() {
+                // Compare before syncing: this is the error the user was seeing.
+                let rendered = clock.position()
+                let drift = abs(position - rendered)
+                if drift > worstDriftSeconds {
+                    worstDriftSeconds = drift
+                }
+                // Formatted up front: os_log interpolation plus concatenation
+                // defeats the type checker.
+                let line = String(
+                    format: "drift %.4fs (rendered %.3f vs music %.3f) worst %.4fs",
+                    drift, rendered, position, worstDriftSeconds
+                )
+                logger.notice("\(line, privacy: .public)")
+
                 clock.sync(position: position, isAdvancing: playerState.isAdvancing)
             }
         } catch MusicBridgeError.musicNotRunning {

@@ -18,6 +18,7 @@
 //
 
 import AppKit
+import OSLog
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -57,6 +58,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         model?.stop()
         diagnostics?.stop()
+    }
+
+    /// §4.1: using the panel must never activate Cue. An accessory app going
+    /// active means something pulled focus, so it is logged as a failure.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        Logger(subsystem: Bundle.main.bundleIdentifier ?? "nz.slstudio.Cue", category: "Focus")
+            .warning("FOCUS: Cue became the active application — should not happen in ordinary use")
     }
 
     private func runDiagnostics(_ options: LaunchOptions) {

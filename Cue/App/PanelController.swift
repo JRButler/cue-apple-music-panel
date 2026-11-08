@@ -13,6 +13,7 @@
 //
 
 import AppKit
+import OSLog
 import SwiftUI
 
 @MainActor
@@ -20,6 +21,9 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     private let panel: CuePanel
     private let model: PlayerModel
+
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "nz.slstudio.Cue",
+                                category: "Focus")
 
     private static let frameKey = "PanelFrame"
     private static let defaultSize = NSSize(width: 420, height: 104)
@@ -91,6 +95,22 @@ final class PanelController: NSObject, NSWindowDelegate {
             let target = max(0, model.clock.position() + delta)
             Task { await self.model.commitSeek(to: target) }
         }
+    }
+
+    // MARK: - Focus invariants (§4.1)
+    //
+    // The panel must never become key and Cue must never become active through
+    // ordinary use. Both are logged rather than assumed, so the claim can be
+    // checked against a real session instead of taken on trust:
+    //
+    //     log show --last 5m --predicate 'subsystem == "nz.slstudio.Cue"' | grep -i focus
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        logger.warning("FOCUS: panel became key — this should not happen in ordinary use")
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        logger.notice("FOCUS: panel resigned key")
     }
 
     // MARK: - Visibility
