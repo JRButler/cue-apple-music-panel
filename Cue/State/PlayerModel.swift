@@ -80,6 +80,10 @@ final class PlayerModel {
     private let artworkCache = ArtworkCache()
     /// Cancels an in-flight fetch when the track changes again first.
     private var artworkTask: Task<Void, Never>?
+    /// The track whose artwork is shown or being fetched. Compared against
+    /// rather than against `track`, which the notification path updates
+    /// optimistically and so cannot be used to detect a change.
+    private var artworkKey: String?
 
     /// §4.6: a drag owns the volume until released, so a sync must not fight it.
     private var isAdjustingVolume = false
@@ -167,7 +171,6 @@ final class PlayerModel {
     }
 
     private func apply(_ state: MusicState) {
-        let trackChanged = state.track?.id != track?.id
 
         playerState = state.playerState
         track = state.track
@@ -193,9 +196,12 @@ final class PlayerModel {
             clock.setAdvancing(false, position: 0)
         }
 
-        if trackChanged {
-            loadArtwork(for: state.track)
-        }
+        // Unconditional: `loadArtwork` decides for itself whether this is a
+        // track it has already fetched. Gating here on a comparison against
+        // `track` was the bug — the notification path sets `track` optimistically
+        // before this runs, so by now it always matches and the artwork never
+        // loaded. The text kept pace; the artwork did not.
+        loadArtwork(for: state.track)
 
         updatePolling()
     }
@@ -208,13 +214,20 @@ final class PlayerModel {
     /// artwork are cached as such, so the placeholder case does not re-ask on
     /// every track change back to the same song.
     private func loadArtwork(for track: TrackInfo?) {
-        artworkTask?.cancel()
-        artworkTask = nil
-
         guard let track else {
+            artworkTask?.cancel()
+            artworkTask = nil
+            artworkKey = nil
             artwork = nil
             return
         }
+
+        // Already showing, or already fetching, this track's art.
+        guard track.id != artworkKey else { return }
+
+        artworkTask?.cancel()
+        artworkTask = nil
+        artworkKey = track.id
 
         if let cached = artworkCache.lookup(track.id) {
             artwork = cached
@@ -374,6 +387,9 @@ final class PlayerModel {
             )
             clock.duration = payload.duration ?? 0
             clock.jump(to: 0)
+            // Start the artwork now rather than waiting for the sync, so it
+            // keeps pace with the title.
+            loadArtwork(for: track)
         }
         updatePolling()
         Task { await resync() }

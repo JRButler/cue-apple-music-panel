@@ -34,8 +34,11 @@ struct PanelView: View {
                 .allowsHitTesting(false)
 
             content
-                .padding(.horizontal, 14)
-                .padding(.vertical, PanelMetrics.padding)
+                // One inset on every side. The artwork's own top nudge is
+                // already folded into it, so the square sits with an equal
+                // margin all round rather than 3 pt tighter at the bottom.
+                .padding(.horizontal, PanelMetrics.edgeInset)
+                .padding(.vertical, PanelMetrics.margin)
         }
         .environment(\.playerModel, model)
         // The window's size is authoritative; asking for more than it has is
@@ -80,13 +83,21 @@ struct PanelView: View {
     /// what lets the panel be shorter: the title, transport and scrub bar share
     /// the vertical space the art used to sit above.
     private var connected: some View {
-        HStack(alignment: .center, spacing: 12) {
+        // Top-aligned, not centred. The artwork square and the stack beside it
+        // are different heights, so centring offset the art downwards by half
+        // the difference and it no longer started level with the title.
+        HStack(alignment: .top, spacing: 12) {
             ArtworkView(
                 image: model.artwork,
                 trackKey: model.track?.id ?? "none",
                 size: PanelMetrics.artworkSize,
                 onActivate: { model.activateMusic() }
             )
+            // A Text view's box starts a little above its glyphs, so a square
+            // whose edge is level with that box reads as sitting slightly high.
+            // This nudges the art down to line up with the title optically
+            // rather than geometrically.
+            .padding(.top, PanelMetrics.artworkTopNudge)
 
             VStack(alignment: .leading, spacing: PanelMetrics.rowGap) {
                 // Title and artist, with the volume beside them when there is room.

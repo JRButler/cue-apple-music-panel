@@ -44,8 +44,28 @@ enum PanelMetrics {
 
     /// Vertical gap between rows of the right-hand stack.
     static let rowGap: CGFloat = 6
-    /// Padding around the whole content.
-    static let padding: CGFloat = 12
+
+    /// The margin around everything, equal on all four sides.
+    ///
+    /// Tunable without a rebuild; restart Cue to see a change:
+    ///
+    ///     defaults write nz.slstudio.Cue PanelMargin 18
+    ///     defaults delete nz.slstudio.Cue PanelMargin
+    static let defaultMargin: CGFloat = 14
+
+    static var margin: CGFloat {
+        let override = UserDefaults.standard.double(forKey: "PanelMargin")
+        return override > 0 ? CGFloat(min(max(override, 4), 40)) : defaultMargin
+    }
+
+    /// Optical alignment of the artwork's top edge with the title's first line.
+    /// A Text view's bounding box starts above its glyphs, so matching the two
+    /// geometrically leaves the square looking high.
+    /// Tunable: `defaults write nz.slstudio.Cue ArtworkTopNudge 4`.
+    static var artworkTopNudge: CGFloat {
+        let override = UserDefaults.standard.object(forKey: "ArtworkTopNudge") as? Double
+        return CGFloat(min(max(override ?? 3, 0), 20))
+    }
 
     // MARK: - Derived
 
@@ -54,24 +74,20 @@ enum PanelMetrics {
         titleBlock + rowGap + transport + rowGap + scrubBar
     }
 
-    /// Breathing room below the stack, on top of the padding. Generous on
-    /// purpose: twice now a tight value has put the scrub bar uncomfortably
-    /// close to the bottom edge, and a few points of air costs nothing.
-    static let slack: CGFloat = 16
+    /// The artwork square is exactly the stack's height, so the two columns
+    /// start and finish level with each other.
+    static var artworkSize: CGFloat { stack }
 
-    /// How far the artwork square is inset within the padded area, so it reads
-    /// as a panel sitting in the layout rather than something cropped by it.
-    static let artworkInset: CGFloat = 10
+    /// The inset that produces an equal margin on every side.
+    ///
+    /// The optical nudge shifts the artwork down, so without adding it back the
+    /// bottom margin ends up `nudge` points narrower than the top — which is
+    /// exactly what the equal-looking sides made obvious.
+    static var edgeInset: CGFloat { margin + artworkTopNudge }
 
-    /// The panel has ONE height. It is not vertically resizable: there is
-    /// nothing to gain by making it taller, and an earlier version that varied
-    /// the height with the width — moving the volume control onto and off the
-    /// title's line — was more trouble than the space it saved.
-    static var contentHeight: CGFloat { stack + 2 * padding + slack }
-
-    /// The artwork square fills the content height inside the padding, so it
-    /// reads as a panel at the left-hand end rather than a thumbnail.
-    static var artworkSize: CGFloat { contentHeight - 2 * padding - artworkInset }
+    /// The panel has ONE height, derived from the artwork and its margins
+    /// rather than guessed at. It is not vertically resizable.
+    static var contentHeight: CGFloat { artworkSize + 2 * edgeInset }
 
     /// §4.6 floors the volume track at 160 pt, which with its two speaker icons
     /// and gaps is 216 pt. The minimum width is whatever leaves room for that
@@ -81,6 +97,6 @@ enum PanelMetrics {
     static let titleMinimum: CGFloat = 130
 
     static var minimumWidth: CGFloat {
-        2 * padding + artworkSize + 12 + titleMinimum + 12 + volumeZoneMinimum
+        2 * edgeInset + artworkSize + 12 + titleMinimum + 12 + volumeZoneMinimum
     }
 }
