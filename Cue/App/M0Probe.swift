@@ -459,6 +459,58 @@ final class M0Probe {
         printVerdict()
     }
 
+    /// Times §4.6's "a change made in Music is reflected within 1 s".
+    ///
+    /// Changes the volume from this process, which the running panel cannot
+    /// distinguish from a change made in Music itself — neither produces a
+    /// notification, so both are only noticed by the panel's 1 Hz tick looking.
+    /// Doing it here rather than by hand means the moment of change is
+    /// timestamped, which is the half a human test cannot supply.
+    ///
+    /// The original level is restored afterwards.
+    func runVolumeLatency() async {
+        heading("§4.6 — external volume change latency")
+
+        guard controller.bridge.isMusicRunning else {
+            fail("Music is not running")
+            printVerdict()
+            return
+        }
+
+        do {
+            let before = try await controller.bridge.fetchState().volume
+            // Somewhere audibly different, but not jarring, and clamped.
+            let target = before >= 50 ? max(0, before - 12) : min(100, before + 12)
+
+            emit("  current volume \(before), changing to \(target)")
+            let stamp = Date()
+            try await controller.bridge.setVolume(target)
+            emit(String(format: "  changed at %@", Self.wallClock.string(from: stamp)))
+            emit("")
+            emit("  The running panel should notice on its next tick. Compare against")
+            emit("  its 'external volume change' log line:")
+            emit("")
+            emit("    log show --last 2m --predicate 'subsystem == \"nz.slstudio.Cue\"' \\")
+            emit("      | grep 'external volume change'")
+
+            // Leave it changed long enough for a couple of ticks, then restore.
+            try? await Task.sleep(for: .seconds(4))
+            try await controller.bridge.setVolume(before)
+            emit("")
+            pass("restored to \(before)")
+        } catch {
+            fail((error as? MusicBridgeError)?.localizedDescription ?? "\(error)")
+        }
+
+        printVerdict()
+    }
+
+    private static let wallClock: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        return formatter
+    }()
+
     // MARK: - Checks
 
     /// Verifies every row of §3.1's error table without provoking each condition.

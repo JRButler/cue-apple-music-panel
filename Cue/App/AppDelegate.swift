@@ -93,6 +93,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             exit(probe.exitCode)
         }
 
+        if options.isVolumeLatency {
+            Task {
+                let probe = M0Probe(controller: controller, options: options)
+                await probe.runVolumeLatency()
+                exit(probe.exitCode)
+            }
+            return
+        }
+
         if options.isMuteProbe {
             Task {
                 let probe = M0Probe(controller: controller, options: options)
@@ -148,6 +157,8 @@ struct LaunchOptions: Sendable {
     var isTestClock = false
     /// Investigates §4.6's mute refusal.
     var isMuteProbe = false
+    /// Times how long the panel takes to notice an external volume change.
+    var isVolumeLatency = false
     /// Seconds to keep listening for `playerInfo` after the probe's fixed
     /// sequence, so a track change can be caught and timed.
     var listenSeconds: Int = 0
@@ -155,7 +166,7 @@ struct LaunchOptions: Sendable {
 
     /// True for any mode that should not build a panel.
     var isDiagnostic: Bool {
-        isProbe || isGrant || isDeny || isBench || isWatch || isDumpRecords || isTestClock || isMuteProbe
+        isProbe || isGrant || isDeny || isBench || isWatch || isDumpRecords || isTestClock || isMuteProbe || isVolumeLatency
     }
 
     init(arguments: [String]) {
@@ -178,6 +189,8 @@ struct LaunchOptions: Sendable {
                 isTestClock = true
             case "--probe-mute":
                 isMuteProbe = true
+            case "--volume-latency":
+                isVolumeLatency = true
             case "--listen":
                 if let value = iterator.next(), let seconds = Int(value) { listenSeconds = seconds }
             case "--samples":

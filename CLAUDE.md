@@ -659,21 +659,32 @@ M0 debug window is gone, as §6 intended, because the panel replaced it.
       The placeholder path is not yet verified; it needs a track with no art.
 - [x] The transport buttons work and the play/pause icon matches Music's state,
       including changes made in Music itself. Confirmed by eye.
-- [~] Volume dragging is smooth — confirmed by eye, after the 1 Hz tick was made
-      to stand down during a drag. A change made in Music being reflected within
-      1 s is not yet verified; see §6.3.
+- [x] Volume dragging is smooth — confirmed by eye, after the tick was made to
+      stand down during a drag. A change made in Music is reflected in **375 ms**
+      measured, with a worst case of ~0.92 s by construction; see §6.3.
 
 #### 6.3 M2 findings
 
 Measured: artwork fetch **22–30 ms** against §4.3's 300 ms criterion (a 318 KB
 payload), a volume write **8.3 ms**, panel CPU **~1.1%** while playing.
 
-**§4.6's "within 1 s" forced the hot path from one Apple Event to two.** Music
-posts no notification when its own volume changes, so the only way to notice is
-to look, and looking has to happen at least once a second. The second reference
-is the whole application `properties` record, which carries volume, mute,
-shuffle, repeat and player state together — one event for all of them, not one
-each. CPU was unaffected.
+**§4.6's "within 1 s" forced the hot path from one Apple Event to two, and the
+poll from 1.0 s to 0.9 s.** Music posts no notification when its own volume
+changes, so the only way to notice is to look. The second reference is the
+whole application `properties` record, which carries volume, mute, shuffle,
+repeat and player state together — one event for all of them, not one each.
+
+The interval matters for the same reason. At exactly 1 Hz the worst case is a
+change landing just after a tick: a full interval plus the ~17 ms read, about
+1.02 s, which misses the criterion by a hair. At 0.9 s the worst case is
+~0.92 s and it is met by construction rather than on average. A measured
+sample — changed externally at 16:08:10.686, noticed at 16:08:11.061 — came in
+at **375 ms**. CPU went from 1.07% to 1.25%.
+
+`tools/run-probe.sh --volume-latency` performs that measurement. It changes the
+volume from a second process, which the panel cannot distinguish from a change
+made in Music, and timestamps the moment — the half a by-hand test cannot
+supply. It restores the original level afterwards.
 
 **Mute cannot use Music's `mute` property.** `set mute to true` is refused with
 error **9038** on macOS 27; `tools/run-probe.sh --probe-mute` establishes that,
@@ -717,9 +728,9 @@ what the window reports.
 
 **Still to verify:**
 
-- [ ] §4.6's "a change made in Music is reflected within 1 s", which needs the
-      volume changed from inside Music itself.
-- [ ] §4.3's placeholder, which needs a track with no artwork.
+- [ ] §4.3's placeholder, which needs a track with no artwork. The code path is
+      straightforward — a nil payload is cached as "this track has none", so it
+      is not re-fetched — but it has not been exercised against a real track.
 
 ### M3 — Shuffle, repeat, favourite
 - Implement §4.5.

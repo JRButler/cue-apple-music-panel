@@ -412,13 +412,25 @@ final class PlayerModel {
         shouldPoll ? startPolling() : stopPolling()
     }
 
-    /// §3.3 says 1 Hz. Overridable for diagnostics without a rebuild:
+    /// §3.3 says 1 Hz; this is deliberately a little faster.
+    ///
+    /// §4.6 requires a volume change made inside Music to be reflected within
+    /// one second, and the tick is the only thing that notices one. At exactly
+    /// 1 Hz the worst case is a change landing just after a tick: a full
+    /// interval plus the ~17 ms read, about 1.02 s, which misses by a hair. At
+    /// 0.9 s the worst case is ~0.92 s and the criterion is met by
+    /// construction rather than on average. A measured sample came in at
+    /// 375 ms.
+    ///
+    /// The cost is 11% more Apple Events on the hot path — under 2 ms a second.
+    ///
+    /// Overridable for diagnostics without a rebuild:
     ///
     ///     defaults write nz.slstudio.Cue PollSeconds 10
     ///     defaults delete nz.slstudio.Cue PollSeconds
     static var pollInterval: TimeInterval {
         let override = UserDefaults.standard.double(forKey: "PollSeconds")
-        return override > 0 ? min(max(override, 0.1), 60) : 1
+        return override > 0 ? min(max(override, 0.1), 60) : 0.9
     }
 
     private func startPolling() {
