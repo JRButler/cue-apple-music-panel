@@ -382,6 +382,14 @@ final class M0Probe {
                           : fail("\(result.name) — \(result.detail)")
         }
 
+        heading("Panel frame clamping (§4.1)")
+        let panelResults = M1PanelTests.runAll()
+        results += panelResults
+        for result in panelResults {
+            result.passed ? pass("\(result.name) — \(result.detail)")
+                          : fail("\(result.name) — \(result.detail)")
+        }
+
         emit("")
         emit("  \(results.filter(\.passed).count)/\(results.count) passed")
         printVerdict()

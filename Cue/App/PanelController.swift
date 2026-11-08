@@ -161,26 +161,43 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     /// §4.1: a frame saved on a display that is no longer attached, or that now
-    /// sits off-screen, is pulled back. "Substantially visible somewhere" is the
+    /// sits off-screen, is pulled back.
+    ///
+    /// `screens` can be supplied to test the arithmetic without rearranging real
+    /// displays — see `M1PanelTests`. "Substantially visible somewhere" is the
     /// test — a panel hanging slightly off an edge is a legitimate position the
     /// user chose, so it is left alone.
-    private static func clamped(_ frame: NSRect) -> NSRect {
-        let screens = NSScreen.screens
+    static func clamped(_ frame: NSRect, screens screensOverride: [NSRect]? = nil) -> NSRect {
+        let screens = screensOverride ?? NSScreen.screens.map(\.visibleFrame)
         guard !screens.isEmpty else { return frame }
 
-        let isUsable = screens.contains { screen in
-            let overlap = screen.visibleFrame.intersection(frame)
-            guard !overlap.isNull else { return false }
-            return overlap.width >= min(frame.width * 0.5, 140)
-                && overlap.height >= min(frame.height * 0.5, 44)
-        }
-        if isUsable { return frame }
-
-        guard let screen = NSScreen.main ?? screens.first else { return frame }
-        let visible = screen.visibleFrame
+        // Step 1: sanitise the SIZE before anything else. A restored frame is
+        // untrusted input — an older build, a hand-edited plist or a corrupt
+        // default can all produce nonsense — and §4.1 fixes the width range.
+        //
+        // This has to come first. Checking visibility on the raw frame treats a
+        // panel wider than the display as "substantially visible", because it
+        // overlaps plenty, and then leaves it that wide.
         var result = frame
-        result.size.width = min(max(result.width, minWidth), min(maxWidth, visible.width))
-        result.size.height = min(result.height, visible.height)
+        let widest = screens.map(\.width).max() ?? maxWidth
+        let tallest = screens.map(\.height).max() ?? result.height
+        result.size.width = min(max(result.width, minWidth), min(maxWidth, widest))
+        result.size.height = min(max(result.height, defaultSize.height), tallest)
+
+        // Step 2: if it is substantially visible on some screen, the position is
+        // one the user chose — including hanging off an edge — so keep it.
+        let isUsable = screens.contains { visible in
+            let overlap = visible.intersection(result)
+            guard !overlap.isNull else { return false }
+            return overlap.width >= min(result.width * 0.5, 140)
+                && overlap.height >= min(result.height * 0.5, 44)
+        }
+        if isUsable { return result }
+
+        // Step 3: otherwise pull it onto a screen.
+        guard let visible = screensOverride?.first ?? NSScreen.main?.visibleFrame ?? screens.first else {
+            return result
+        }
         result.origin.x = min(max(visible.minX, result.minX), visible.maxX - result.width)
         result.origin.y = min(max(visible.minY, result.minY), visible.maxY - result.height)
         return result

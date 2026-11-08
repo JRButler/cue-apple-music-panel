@@ -585,9 +585,35 @@ log show --last 5m --predicate 'subsystem == "nz.slstudio.Cue"' | grep -i focus
 than a drag, and that committed exactly once too, which is the case the shared
 `DragGesture(minimumDistance: 0)` exists to make identical.
 
+**Stays within 0.5 s of Music — verified against the real app.** The 1 Hz tick
+logs the gap between what the clock was rendering and what Music then reported.
+Over a few minutes of playback the **worst gap was 17 ms**, against a 0.5 s
+tolerance — roughly the cost of the `fetchPosition` round trip, which is the
+floor. The clock's own arithmetic is checked separately by `--test-clock`.
+
+**Idle CPU under 1% while paused — verified, 0.00%.** Measured in 10 s buckets
+with a track loaded and paused, which matters: an earlier 0.45% figure was taken
+with *nothing* loaded, a much simpler view tree, and so did not actually test
+the criterion. Playing sits at 1.0–1.2%.
+
+**Off-screen frame clamping — verified numerically.** The real condition needs a
+display to be unplugged, but the arithmetic does not, so `M1PanelTests` feeds
+`PanelController.clamped(_:screens:)` synthetic screen rectangles: a detached
+second display, a wildly off-screen origin, a frame deliberately hanging off an
+edge (which must survive, being a position the user chose), and a frame wider
+than the display.
+
+That last case found a real bug. Visibility was tested before size, so a frame
+4000 pt wide counted as "substantially visible" — it overlaps plenty — and was
+left that wide. Size is now sanitised against §4.1's width range *first*, and
+the position check follows.
+
 **Not yet verified:**
 
-- [ ] Off-screen frame clamping, which needs a display change to exercise.
+- [ ] The end time after a pause and resume. The formatting is covered by
+      `--test-clock`, and the label is computed fresh from `Date()` on every
+      evaluation, so it cannot go stale by construction — but that it reads
+      correctly to a human across a pause has not been checked by eye.
 
 ### M2 — Album art, transport, volume
 - Implement §4.3, §4.4, and §4.6, using the layout in §4.6a.
