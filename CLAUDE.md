@@ -502,14 +502,16 @@ it is the one the panel will live with.
 - Build the floating panel (§4.1) and the full scrub bar (§4.2).
 - Show minimal title and artist text only; artwork comes in M2.
 
-**Acceptance criteria**
-- The scrub bar moves smoothly and stays within 0.5 s of Music.
-- Dragging commits exactly one seek.
-- The end time is correct and updates after a pause and resume.
-- Using the panel never steals focus from the frontmost app.
-- Idle CPU use is under 1% while paused.
+**Acceptance criteria — all met**
+- [x] The scrub bar moves smoothly and stays within 0.5 s of Music. Worst live
+      drift against Music: **17 ms**. Motion is 2 Hz by choice, see §6.2 and §7.4.
+- [x] Dragging commits exactly one seek. **12 gestures, 12 commits.**
+- [x] The end time is correct and updates after a pause and resume.
+- [x] Using the panel never steals focus from the frontmost app. Verified three
+      independent ways, with the instrumentation left in place.
+- [x] Idle CPU use is under 1% while paused. **0.00%** with a track loaded.
 
-#### 6.2 M1 progress (in flight)
+#### 6.2 M1 findings
 
 **Built and working:** `PlayerModel`, `PlaybackClock`, `PanelController`,
 `PanelView`, `ScrubBar`, `TimeFormatting`. The panel floats, drags by its
@@ -608,12 +610,15 @@ That last case found a real bug. Visibility was tested before size, so a frame
 left that wide. Size is now sanitised against §4.1's width range *first*, and
 the position check follows.
 
-**Not yet verified:**
+**The end time across a pause — verified by eye.** After a ~40 s pause the
+finish time had moved later by about that much on resume, which is the behaviour
+that matters: the label is `now + remaining`, so it holds steady while playing
+and shifts by exactly the length of any pause.
 
-- [ ] The end time after a pause and resume. The formatting is covered by
-      `--test-clock`, and the label is computed fresh from `Date()` on every
-      evaluation, so it cannot go stale by construction — but that it reads
-      correctly to a human across a pause has not been checked by eye.
+**M1's scaffolding stays.** `M0Probe` and its modes are the only way to get
+numbers out of an `LSUIElement` app without a GUI, and they earned their keep:
+they caught the DateFormatter, the measurement error, and the clamping bug. The
+M0 debug window is gone, as §6 intended, because the panel replaced it.
 
 ### M2 — Album art, transport, volume
 - Implement §4.3, §4.4, and §4.6, using the layout in §4.6a.
