@@ -75,22 +75,18 @@ struct PanelView: View {
     /// §4.2 renders the interpolated clock, not the last polled value, which is
     /// what lets a 1 Hz poll drive a bar that moves smoothly.
     ///
-    /// `paused:` is what keeps the panel at zero cost while nothing is playing —
-    /// M1's "idle CPU under 1% while paused" criterion. A 30 Hz ceiling rather
-    /// than full refresh rate is deliberate: the thumb travels about a pixel a
-    /// second, so 30 Hz is already sub-pixel per frame, and it is a quarter of
-    /// the work of 120 Hz. Dragging is unaffected — the gesture drives its own
-    /// repaints, so the thumb still tracks the pointer 1:1.
+    /// There is no TimelineView here any more. Wrapping the whole bar in one made
+    /// every label and every string format re-evaluate at the thumb's rate, for
+    /// 6% of a core; ScrubBar now scopes its own redraws, and the comment at the
+    /// top of that file explains how.
     private var scrubBar: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !model.playerState.isAdvancing)) { _ in
-            ScrubBar(
-                position: model.clock.position(),
-                duration: model.track?.duration ?? 0,
-                isPlaying: model.playerState.isAdvancing,
-                onSeek: { target in Task { await model.commitSeek(to: target) } },
-                onScrubbingChanged: { model.setScrubbing($0) }
-            )
-        }
+        ScrubBar(
+            clock: model.clock,
+            duration: model.track?.duration ?? 0,
+            isPlaying: model.playerState.isAdvancing,
+            onSeek: { target in Task { await model.commitSeek(to: target) } },
+            onScrubbingChanged: { model.setScrubbing($0) }
+        )
     }
 }
 

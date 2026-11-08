@@ -27,10 +27,18 @@ final class PlaybackClock {
     static let easeDuration: TimeInterval = 0.4
 
     /// The last position Music reported, and when we learned it.
-    private var anchorPosition: TimeInterval = 0
+    private(set) var anchorPosition: TimeInterval = 0
     private var anchorInstant: ContinuousClock.Instant = .now
     /// Whether the position should be advancing with time.
-    private var isAdvancing = false
+    private(set) var isAdvancing = false
+
+    /// Bumped on every sync, jump and state change.
+    ///
+    /// The view animates *to* a target rather than sampling the clock each
+    /// frame, so it needs to re-evaluate whenever a new target exists — even
+    /// when the position happens to repeat, which it does while paused. A plain
+    /// value comparison would miss that; this will not.
+    private(set) var generation: UInt64 = 0
 
     /// A correction being eased in, rather than snapped.
     private var pendingCorrection: TimeInterval = 0
@@ -80,6 +88,7 @@ final class PlaybackClock {
 
         isAdvancing = advancing
         hasAnchor = true
+        generation += 1
     }
 
     /// Called when playback starts, stops or pauses, so the clock stops
@@ -89,6 +98,7 @@ final class PlaybackClock {
         anchorInstant = instant
         pendingCorrection = 0
         isAdvancing = advancing
+        generation += 1
     }
 
     /// Moves the clock immediately, for an optimistic update after a seek.
@@ -96,6 +106,7 @@ final class PlaybackClock {
         anchorPosition = position
         anchorInstant = instant
         pendingCorrection = 0
+        generation += 1
     }
 
     func reset() {
@@ -105,6 +116,7 @@ final class PlaybackClock {
         isAdvancing = false
         hasAnchor = false
         duration = 0
+        generation += 1
     }
 
     // MARK: - Output

@@ -18,6 +18,7 @@
 import AppKit
 import Foundation
 import Observation
+import OSLog
 
 @MainActor
 @Observable
@@ -41,8 +42,13 @@ final class PlayerModel {
     private(set) var isShuffling = false
     private(set) var repeatMode: RepeatMode = .off
 
-    /// The interpolated clock the scrub bar renders.
+    /// The interpolated clock. Read by the scrub bar for its animation targets,
+    /// and still the authority on "where are we" for seeks and labels.
     let clock = PlaybackClock()
+
+    /// How far ahead the scrub bar should animate on each sync. One poll
+    /// interval, so the thumb arrives just as the next sync re-targets it.
+    var animationLookahead: TimeInterval { Self.pollInterval }
 
     /// §4.2: whether the right-hand label shows remaining or total time.
     /// Persisted, because the spec asks for the choice to stick.
@@ -58,6 +64,13 @@ final class PlayerModel {
     private let bridge: MusicBridge
     private let events: MusicEventSource
     private var pollTask: Task<Void, Never>?
+
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "nz.slstudio.Cue",
+                                category: "PlayerModel")
+
+    /// Every seek this session. §4.2 requires exactly one per drag, and the only
+    /// way to know is to count them — so each is logged and tallied.
+    private(set) var seekCount = 0
 
     private static let showsTotalTimeKey = "ScrubBarShowsTotalTime"
 
@@ -187,11 +200,21 @@ final class PlayerModel {
         shouldPoll ? startPolling() : stopPolling()
     }
 
+    /// §3.3 says 1 Hz. Overridable for diagnostics without a rebuild:
+    ///
+    ///     defaults write nz.slstudio.Cue PollSeconds 10
+    ///     defaults delete nz.slstudio.Cue PollSeconds
+    static var pollInterval: TimeInterval {
+        let override = UserDefaults.standard.double(forKey: "PollSeconds")
+        return override > 0 ? min(max(override, 0.1), 60) : 1
+    }
+
     private func startPolling() {
         guard pollTask == nil else { return }
+        let interval = Self.pollInterval
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
+                try? await Task.sleep(for: .seconds(interval))
                 guard !Task.isCancelled, let self else { return }
                 await tick()
             }
@@ -227,6 +250,8 @@ final class PlayerModel {
 
     /// §4.2: exactly one `set player position` per drag, on release.
     func commitSeek(to position: TimeInterval) async {
+        seekCount += 1
+        logger.notice("seek committed #\(self.seekCount, privacy: .public) to \(position, privacy: .public)s")
         clock.jump(to: position)
         do {
             try await bridge.seek(to: position)
@@ -239,6 +264,7 @@ final class PlayerModel {
     /// Called as a drag begins and ends (§4.2's suppression rule).
     func setScrubbing(_ scrubbing: Bool) {
         clock.isSuppressed = scrubbing
+        logger.notice("scrubbing \(scrubbing ? "began" : "ended", privacy: .public)")
     }
 
     func openMusic() async {

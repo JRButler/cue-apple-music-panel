@@ -527,21 +527,41 @@ confirmed by hand. The M0 debug window is gone.
 The record parser is verified against a real track: 58 fields for one event,
 with persistent ID, duration and `favorited` all correct.
 
-**Open: CPU while playing is ~6%, which is too high.** It was ~12%; the first
-half was `TimeFormatting.endTime` building a `DateFormatter` on every frame,
-which `sample` traced through `__CreateCFDateFormatter` into ICU's `udat_open`.
-That formatter is now cached. The remaining ~6% is SwiftUI re-rendering
-`ScrubBar` 30 times a second, and the thumb only moves about a pixel a second,
-so the rate is the thing to attack. Options, cheapest first:
+**CPU while playing: 5.55% → ~1.1%, and the cause was not what it looked like.**
 
-1. Split the view so the timeline drives only the thumb offset and progress
-   fill, leaving the labels — which change once a second — out of the high-rate
-   body entirely. The end-time string changes once a *minute*.
-2. Drop the passive rate to 10–15 Hz. Still sub-pixel per frame at this speed.
-   Dragging is unaffected either way, since the gesture drives its own repaints.
-3. Check whether `.ultraThinMaterial` behind a 30 Hz invalidation is forcing a
-   backdrop re-blur each frame, which would be the real cost rather than the
-   text.
+Measured properly, on a Mac Studio M1, 20 s windows with a track playing:
+
+| thumb mechanism | CPU |
+|---|---|
+| none — static bar | **0.45%** |
+| SwiftUI timeline, 2 Hz (what ships) | **1.05–1.20%** |
+| SwiftUI timeline, 5–30 Hz | 5.1–5.7% |
+| SwiftUI `.animation` on a transform | 6.4–8.8% |
+
+Two things to take from that, because several plausible explanations were wrong:
+
+1. **Everything that moves the thumb through SwiftUI runs on the main thread,
+   including `.animation`.** SwiftUI drives its own interpolation rather than
+   handing the transform to Core Animation, so *animating cost more than
+   ticking*, not less. The rate is therefore the only lever inside SwiftUI, and
+   §7.4 covers the way out.
+2. **`top` is not trustworthy here.** It reported a flat 3.3% across 5–30 Hz,
+   which sent the investigation after a phantom "rate-independent" cost — a
+   full Auto Layout pass per display cycle, detaching `NSHostingView` from the
+   window's layout, the vibrancy material. None of those were it. The work is
+   bursty, and `sample` showed every thread idle while real CPU was 5.55%.
+   **Measure with the cumulative-CPU delta instead**, which is what every figure
+   above uses:
+
+   ```sh
+   T0=$(ps -o time= -p $PID); sleep 20; T1=$(ps -o time= -p $PID)   # delta / wall
+   ```
+
+One genuine fix came out of it regardless: `TimeFormatting.endTime` was building
+a `DateFormatter` per call, and `sample` traced that through ICU's `udat_open`.
+It is cached now. Labels were also moved off the high-rate path — they read the
+`@Observable` clock, so they refresh when it syncs, which is the only rate at
+which their text can change.
 
 **Not yet verified:**
 
@@ -633,6 +653,24 @@ Three ways out, for a decision in M5:
    so the user opts into key status when they want the keyboard.
 3. **Weaken the contract**, letting a click take key status. Not recommended:
    it breaks the criterion that justifies the whole panel design.
+
+### 7.4 A smooth thumb needs CALayers, not SwiftUI
+
+M1 established that any continuously-moving element driven by SwiftUI costs
+5–8% of a core on an M1, because SwiftUI interpolates on the main thread. The
+bar ships at 2 Hz and ~1.1% as a result, which steps visibly rather than
+gliding.
+
+The way to get both smooth and cheap is to draw the track, fill and thumb as
+`CALayer`s inside a small `NSViewRepresentable`, and re-target a
+`CABasicAnimation` on the thumb layer's `position` once per sync. Core Animation
+interpolates layer properties on the render server, so the main thread does
+nothing between syncs and the motion runs at true display refresh rate. Expect
+roughly the static cost, ~0.5%.
+
+Cost: perhaps 150 lines of AppKit, and the scrub bar stops being a SwiftUI view,
+so the gesture handling and the hit-target rule move with it. Worth doing only
+if the 2 Hz stepping is visibly annoying in use — judge it by eye first.
 
 ### 7.2 Product questions
 

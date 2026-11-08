@@ -42,7 +42,17 @@ final class PanelController: NSObject, NSWindowDelegate {
         super.init()
 
         configure()
-        panel.contentView = NSHostingView(rootView: PanelView(model: model))
+
+        // `sizingOptions = []` detaches the hosting view from the window's Auto
+        // Layout. By default it publishes the SwiftUI content's intrinsic size,
+        // so every label whose text changes invalidates the window's layout and
+        // provokes a full `-[NSWindow layoutIfNeeded]` pass — once a second, at
+        // enough cost to dominate the panel's CPU while playing. The panel's size
+        // is the user's to set (§4.1 makes it resizable), so nothing is lost.
+        let hostingView = NSHostingView(rootView: PanelView(model: model))
+        hostingView.sizingOptions = []
+        hostingView.autoresizingMask = [.width, .height]
+        panel.contentView = hostingView
         panel.setFrame(Self.restoredFrame(), display: false)
         panel.delegate = self
     }

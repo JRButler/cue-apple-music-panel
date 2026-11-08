@@ -10,12 +10,36 @@
 //    · a drag commits exactly ONE seek, on release
 //    · while dragging, Music's reports must not move the thumb
 //
+//  HOW THE THUMB MOVES — not by redrawing on a timer.
+//
+//  Earlier attempts sampled the clock from a TimelineView and redrew. That cost
+//  5–6% of a core, and worse, it did not respond sensibly to the rate: 5 Hz and
+//  30 Hz measured the same, because the work done per tick dominated. Shrinking
+//  the per-tick work made it worse still.
+//
+//  Instead, each sync hands the bar a *target* one poll-interval ahead, plus a
+//  linear animation to reach it. Core Animation interpolates on the render server
+//  at true display refresh rate, and SwiftUI evaluates this view once per sync —
+//  about 1 Hz — instead of once per frame.
+//
+//  Both moving parts are deliberately transforms rather than layout:
+//    · the fill is a capsule with a horizontal scaleEffect, clipped so its ends
+//      stay round
+//    · the thumb is an offset
+//  Animating a width would re-run layout every frame, which is the cost being
+//  avoided.
+//
+//  A drag bypasses all of it: `dragPosition` drives the view directly with
+//  animation disabled, so the thumb tracks the pointer exactly.
+//
 
 import SwiftUI
 
 struct ScrubBar: View {
 
-    let position: TimeInterval
+    /// Read live rather than passed as a snapshot, so the view can take both its
+    /// animation target and its label values from one source.
+    let clock: PlaybackClock
     let duration: TimeInterval
     let isPlaying: Bool
 
@@ -28,49 +52,115 @@ struct ScrubBar: View {
     @State private var dragPosition: TimeInterval?
     @State private var isHovering = false
 
+    @Environment(\.playerModel) private var model
+
     /// §4.2: at least 20 pt of interactive height.
     private let interactiveHeight: CGFloat = 24
     private let trackHeight: CGFloat = 5
     private let thumbDiameter: CGFloat = 13
 
+    /// How often the thumb is repositioned during passive playback.
+    ///
+    /// Overridable without a rebuild, so the rate can be judged by eye against
+    /// its measured cost:
+    ///
+    ///     defaults write nz.slstudio.Cue ThumbHz 10
+    ///     defaults delete nz.slstudio.Cue ThumbHz     # back to the default
+    static let defaultThumbHz: Double = 2
+
+    private static var thumbRefreshInterval: TimeInterval {
+        let override = UserDefaults.standard.double(forKey: "ThumbHz")
+        let hz = override > 0 ? min(max(override, 0.5), 120) : defaultThumbHz
+        return 1.0 / hz
+    }
+
     private var isSeekable: Bool { duration > 0 }
-
-    /// What the bar should render: the drag, if one is in progress, otherwise
-    /// the clock.
-    private var displayPosition: TimeInterval {
-        dragPosition ?? position
-    }
-
-    private var progress: Double {
-        guard isSeekable else { return 0 }
-        return min(max(0, displayPosition / duration), 1)
-    }
 
     var body: some View {
         VStack(spacing: 3) {
             HStack(alignment: .center, spacing: 10) {
-                Text(TimeFormatting.position(displayPosition, trackDuration: duration))
-                    .font(.system(.caption, design: .rounded).weight(.medium))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .frame(minWidth: 38, alignment: .leading)
-
-                track
-                    .frame(height: interactiveHeight)
-                    .frame(maxWidth: .infinity)
-
+                elapsedLabel
+                trackArea
                 trailingLabel
             }
-
             endTimeLabel
         }
     }
 
+    /// The position the labels should show: the drag if one is in progress, else
+    /// the interpolated clock.
+    private func displayPosition() -> TimeInterval {
+        dragPosition ?? clock.position()
+    }
+
+    // MARK: - Labels
+    //
+    // No timeline and no animation. PlaybackClock is @Observable, so reading it
+    // registers a dependency and these refresh when it syncs — 1 Hz, which is
+    // exactly the rate at which their text can change.
+
+    private var elapsedLabel: some View {
+        Text(TimeFormatting.position(displayPosition(), trackDuration: duration))
+            .font(.system(.caption, design: .rounded).weight(.medium))
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+            .frame(minWidth: 38, alignment: .leading)
+    }
+
+    /// §4.2: clicking toggles between remaining and total. The choice persists,
+    /// which is why it lives in PlayerModel rather than in @State here.
+    private var trailingLabel: some View {
+        Button {
+            model?.showsTotalTime.toggle()
+        } label: {
+            Text(trailingText)
+                .font(.system(.caption, design: .rounded).weight(.medium))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 42, alignment: .trailing)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(isSeekable
+              ? "Track length \(TimeFormatting.total(duration)) — click to switch"
+              : "This track has no duration")
+    }
+
+    private var trailingText: String {
+        guard isSeekable else { return "--:--" }
+        if model?.showsTotalTime == true {
+            return TimeFormatting.total(duration)
+        }
+        return TimeFormatting.remaining(max(0, duration - displayPosition()), trackDuration: duration)
+    }
+
+    /// §4.2: the wall-clock finish time while playing, "paused" otherwise.
+    private var endTimeLabel: some View {
+        Text(endTimeText)
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    private var endTimeText: String {
+        guard isSeekable else { return isPlaying ? "live" : "paused" }
+        guard isPlaying else { return "paused" }
+        return TimeFormatting.endTime(remaining: max(0, duration - displayPosition()))
+    }
+
     // MARK: - Track
 
-    private var track: some View {
+    private var trackArea: some View {
+        trackBody
+            .frame(height: interactiveHeight)
+            .frame(maxWidth: .infinity)
+    }
+
+    /// Static structure. None of this is rebuilt to move the thumb.
+    private var trackBody: some View {
         GeometryReader { geometry in
             let width = geometry.size.width
+
             ZStack(alignment: .leading) {
                 // The whole height is hit-testable, not just the visible track.
                 Rectangle()
@@ -82,33 +172,81 @@ struct ScrubBar: View {
                     .frame(height: trackHeight)
 
                 if isSeekable {
-                    Capsule()
-                        .fill(.tint)
-                        .frame(width: max(trackHeight, width * progress), height: trackHeight)
-
-                    Circle()
-                        .fill(.white)
-                        .shadow(radius: 1.5, y: 0.5)
-                        .frame(width: thumbDiameter, height: thumbDiameter)
-                        .offset(x: width * progress - thumbDiameter / 2)
-                        .opacity(isHovering || dragPosition != nil ? 1 : 0.85)
-                        .animation(.easeOut(duration: 0.12), value: isHovering)
+                    ticker {
+                        fill
+                        thumb(width: width)
+                    }
                 } else {
                     // §4.2's stream case: indeterminate, and not seekable.
                     IndeterminateBar(height: trackHeight, isAnimating: isPlaying)
                 }
             }
             .frame(maxHeight: .infinity)
+            .onHover { isHovering = $0 }
+            .gesture(dragGesture(width: width))
             .overlay(alignment: .topLeading) {
                 if let dragPosition {
                     TimeBubble(text: TimeFormatting.position(dragPosition, trackDuration: duration))
-                        .offset(x: bubbleOffset(width: width), y: -22)
+                        .offset(x: bubbleOffset(width: width, progress: renderProgress), y: -22)
                 }
             }
-            .onHover { isHovering = $0 }
-            .gesture(dragGesture(width: width))
         }
     }
+
+    /// A scaleEffect rather than a width: a transform Core Animation can
+    /// interpolate without re-running layout every frame.
+    private var fill: some View {
+        Capsule()
+            .fill(.tint)
+            .frame(height: trackHeight)
+            .scaleEffect(x: max(0.0001, renderProgress), y: 1, anchor: .leading)
+            .clipShape(Capsule())
+    }
+
+    private func thumb(width: CGFloat) -> some View {
+        Circle()
+            .fill(.white)
+            // No .shadow(): it forces an offscreen pass every time the thumb
+            // moves. A hairline border reads as well against the track.
+            .overlay(Circle().strokeBorder(.black.opacity(0.12), lineWidth: 0.5))
+            .frame(width: thumbDiameter, height: thumbDiameter)
+            .offset(x: width * renderProgress - thumbDiameter / 2)
+            .opacity(isHovering || dragPosition != nil ? 1 : 0.9)
+    }
+
+    /// Advances the moving parts while something is playing.
+    ///
+    /// INTERIM. Measured on a Mac Studio M1, 20 s windows, playing:
+    ///
+    ///     static bar (no motion)        0.45%
+    ///     this ticker at 2 Hz           1.13%
+    ///     this ticker at 5-30 Hz        5.1-5.7%
+    ///     SwiftUI .animation            6.4-8.8%
+    ///
+    /// Everything that moves the thumb through SwiftUI runs on the main thread,
+    /// including `.animation` — SwiftUI drives its own interpolation rather than
+    /// handing the transform to Core Animation, so animating cost *more* than
+    /// ticking, not less. 2 Hz is the honest compromise until the bar is drawn
+    /// with CALayers, where the render server can interpolate for free. See §7.4.
+    @ViewBuilder
+    private func ticker<Content: View>(@ViewBuilder _ content: @escaping () -> Content) -> some View {
+        if isPlaying {
+            TimelineView(.periodic(from: .now, by: Self.thumbRefreshInterval)) { _ in
+                ZStack(alignment: .leading) { content() }
+            }
+        } else {
+            ZStack(alignment: .leading) { content() }
+        }
+    }
+
+    /// Where the thumb should be drawn now.
+    private var renderProgress: Double {
+        guard isSeekable else { return 0 }
+        if let dragPosition { return clamp(dragPosition / duration) }
+        return clamp(clock.position() / duration)
+    }
+
+    private func clamp(_ value: Double) -> Double { min(max(0, value), 1) }
 
     /// A click anywhere seeks there; a drag scrubs. `minimumDistance: 0` makes a
     /// plain click a zero-length drag, so one gesture covers both and they
@@ -138,55 +276,10 @@ struct ScrubBar: View {
 
     /// Keeps the bubble inside the bar's width instead of letting it hang off
     /// either end.
-    private func bubbleOffset(width: CGFloat) -> CGFloat {
+    private func bubbleOffset(width: CGFloat, progress: Double) -> CGFloat {
         let bubbleWidth: CGFloat = 46
         let ideal = width * progress - bubbleWidth / 2
         return min(max(0, ideal), max(0, width - bubbleWidth))
-    }
-
-    // MARK: - Labels
-
-    /// §4.2: clicking toggles between remaining and total. The choice persists,
-    /// which is why the binding lives in PlayerModel rather than here.
-    @Environment(\.playerModel) private var model
-
-    private var trailingLabel: some View {
-        Button {
-            model?.showsTotalTime.toggle()
-        } label: {
-            Text(trailingText)
-                .font(.system(.caption, design: .rounded).weight(.medium))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .frame(minWidth: 42, alignment: .trailing)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(isSeekable
-              ? "Track length \(TimeFormatting.total(duration)) — click to switch"
-              : "This track has no duration")
-    }
-
-    private var trailingText: String {
-        guard isSeekable else { return "--:--" }
-        if model?.showsTotalTime == true {
-            return TimeFormatting.total(duration)
-        }
-        return TimeFormatting.remaining(max(0, duration - displayPosition), trackDuration: duration)
-    }
-
-    /// §4.2: the wall-clock finish time while playing, "paused" otherwise.
-    private var endTimeLabel: some View {
-        Text(endTimeText)
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
-            .frame(maxWidth: .infinity, alignment: .center)
-    }
-
-    private var endTimeText: String {
-        guard isSeekable else { return isPlaying ? "live" : "paused" }
-        guard isPlaying else { return "paused" }
-        return TimeFormatting.endTime(remaining: max(0, duration - displayPosition))
     }
 }
 
