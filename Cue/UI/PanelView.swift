@@ -46,6 +46,15 @@ struct PanelView: View {
         // The window's size is authoritative; asking for more than it has is
         // what made a live resize look like the panel was squashing.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Essential with `.fullSizeContentView`. The titlebar is 32 pt, and
+        // although the content view spans the whole window, SwiftUI applies a
+        // safe-area inset for the titlebar and lays the content out in the
+        // remaining 117 pt of a 149 pt panel. The content then overflows that
+        // box evenly, 16 pt each way, which put the artwork 33 pt from the top
+        // and 1 pt from the bottom — measured, after reasoning about it failed
+        // twice. The panel draws its own background, so there is no safe area
+        // worth respecting here.
+        .ignoresSafeArea()
     }
 
     @ViewBuilder
@@ -95,7 +104,11 @@ struct PanelView: View {
                 size: PanelMetrics.artworkSize,
                 onActivate: { model.activateMusic() }
             )
-
+            // Reports where the square actually lands in the window, so the
+            // margins can be read off rather than reasoned about.
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rect in
+                PanelView.reportArtworkFrame(rect)
+            }
 
             VStack(alignment: .leading, spacing: PanelMetrics.rowGap) {
                 // Title and artist, with the volume beside them when there is room.
@@ -150,6 +163,21 @@ struct PanelView: View {
         let message = String(
             format: "METRICS: stack renders at %.1fpt, PanelMetrics predicts %.1fpt (delta %+.1f)",
             height, predicted, height - predicted
+        )
+        Logger(subsystem: Bundle.main.bundleIdentifier ?? "nz.slstudio.Cue", category: "Layout")
+            .notice("\(message, privacy: .public)")
+    }
+
+    nonisolated(unsafe) private static var lastArtworkFrame: CGRect = .zero
+
+    static func reportArtworkFrame(_ rect: CGRect) {
+        guard rect.height > 0,
+              abs(rect.minY - lastArtworkFrame.minY) > 0.5 || abs(rect.height - lastArtworkFrame.height) > 0.5
+        else { return }
+        lastArtworkFrame = rect
+        let message = String(
+            format: "ARTFRAME: y %.1f..%.1f (h %.1f) x %.1f, expected inset %.1f",
+            rect.minY, rect.maxY, rect.height, rect.minX, PanelMetrics.edgeInset
         )
         Logger(subsystem: Bundle.main.bundleIdentifier ?? "nz.slstudio.Cue", category: "Layout")
             .notice("\(message, privacy: .public)")
