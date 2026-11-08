@@ -9,6 +9,7 @@
 //  is closed is worse than one that says so.
 //
 
+import OSLog
 import SwiftUI
 
 struct PanelView: View {
@@ -114,9 +115,30 @@ struct PanelView: View {
 
                 scrubBar
             }
+            // Measures what the stack actually renders at, rather than what my
+            // arithmetic in PanelMetrics predicts. Two separate off-by-a-few
+            // errors have clipped the bottom of this panel.
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+                PanelView.reportStackHeight(size.height)
+            }
         }
     }
 
+
+    /// Logs the stack's rendered height once per distinct value.
+    nonisolated(unsafe) private static var lastReported: CGFloat = 0
+
+    static func reportStackHeight(_ height: CGFloat) {
+        guard height > 0, abs(height - lastReported) > 0.5 else { return }
+        lastReported = height
+        let predicted = PanelMetrics.stack
+        let message = String(
+            format: "METRICS: stack renders at %.1fpt, PanelMetrics predicts %.1fpt (delta %+.1f)",
+            height, predicted, height - predicted
+        )
+        Logger(subsystem: Bundle.main.bundleIdentifier ?? "nz.slstudio.Cue", category: "Layout")
+            .notice("\(message, privacy: .public)")
+    }
 
     private var volumeControl: some View {
         VolumeControl(

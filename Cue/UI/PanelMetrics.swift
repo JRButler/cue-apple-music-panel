@@ -26,6 +26,12 @@ enum PanelMetrics {
     // MARK: - Components
 
     /// Title line plus artist/album line.
+    ///
+    /// These component figures are estimates; what matters is `stack`, which is
+    /// checked against the real rendered height at runtime — `PanelView` logs
+    /// a METRICS line whenever the two disagree. The last measurement put the
+    /// stack at 112 pt against a predicted 115, so the slack below absorbs a
+    /// few points either way rather than the panel clipping.
     static let titleBlock: CGFloat = 33
     /// §4.4's transport row, sized by the 46 pt play/pause target.
     static let transport: CGFloat = 46
@@ -48,8 +54,14 @@ enum PanelMetrics {
         titleBlock + rowGap + transport + rowGap + scrubBar
     }
 
-    /// A little slack so the bottom row is never flush against the edge.
-    static let slack: CGFloat = 8
+    /// Breathing room below the stack, on top of the padding. Generous on
+    /// purpose: twice now a tight value has put the scrub bar uncomfortably
+    /// close to the bottom edge, and a few points of air costs nothing.
+    static let slack: CGFloat = 16
+
+    /// How far the artwork square is inset within the padded area, so it reads
+    /// as a panel sitting in the layout rather than something cropped by it.
+    static let artworkInset: CGFloat = 10
 
     /// The panel has ONE height. It is not vertically resizable: there is
     /// nothing to gain by making it taller, and an earlier version that varied
@@ -59,7 +71,7 @@ enum PanelMetrics {
 
     /// The artwork square fills the content height inside the padding, so it
     /// reads as a panel at the left-hand end rather than a thumbnail.
-    static var artworkSize: CGFloat { contentHeight - 2 * padding }
+    static var artworkSize: CGFloat { contentHeight - 2 * padding - artworkInset }
 
     /// §4.6 floors the volume track at 160 pt, which with its two speaker icons
     /// and gaps is 216 pt. The minimum width is whatever leaves room for that

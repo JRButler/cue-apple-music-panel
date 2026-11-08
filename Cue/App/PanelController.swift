@@ -73,7 +73,13 @@ final class PanelController: NSObject, NSWindowDelegate {
         hostingView.translatesAutoresizingMaskIntoConstraints = true
         hostingView.autoresizingMask = [.width, .height]
         panel.contentView = hostingView
-        hostingView.frame = panel.contentLayoutRect
+        // Deliberately NOT `hostingView.frame = panel.contentLayoutRect`.
+        //
+        // With `.fullSizeContentView` the content view spans the entire window,
+        // but `contentLayoutRect` reports only the part the titlebar does not
+        // cover — 123 pt of a 155 pt window. Assigning it squashed the SwiftUI
+        // content into that shorter box and cut the scrub bar in half at the
+        // bottom edge. AppKit sizes the content view itself; leave it alone.
 
         panel.setFrame(Self.restoredFrame(), display: false)
 
@@ -152,6 +158,20 @@ final class PanelController: NSObject, NSWindowDelegate {
     func show() {
         panel.orderFrontRegardless()
         model.setPanelVisible(true)
+
+        // The hosting view's own frame is the number that matters: it is what
+        // SwiftUI lays out into. `contentLayoutRect` excludes the titlebar and
+        // is misleading here, which is how a bad frame assignment hid in plain
+        // sight while the log looked plausible.
+        let hostFrame = panel.contentView?.frame ?? .zero
+        let message = String(
+            format: "FRAME: window %.0fx%.0f, hostingView %.0fx%.0f, layoutRect h%.0f, expected h%.0f, artwork %.0f",
+            panel.frame.width, panel.frame.height,
+            hostFrame.width, hostFrame.height,
+            panel.contentLayoutRect.height,
+            Self.contentHeight, PanelMetrics.artworkSize
+        )
+        logger.notice("\(message, privacy: .public)")
     }
 
 
