@@ -294,19 +294,39 @@ Interaction:
 - Scrolling over the slider (trackpad or wheel) adjusts the volume in steps of 2.
 - Read the volume on each sync, so changes made in Music itself are reflected.
 
-### 4.6a Panel layout (compact)
+### 4.6a Panel layout
+
+Built in M2 as a mini-player: the artwork is a square **column** at the
+left-hand end, not a row above everything, which is what lets the panel be
+short. Transport sits directly above the scrub bar; the volume control has the
+top-right zone on the title's line.
+
 ```
-┌──────────────────────────────────────────────────┐
-│ ┌──────┐  Title                                  │
-│ │ art  │  Artist — Album                         │
-│ └──────┘                                         │
-│ 1:42  ━━━━━━━━━━━━●──────────────  -2:13         │
-│                    ends 2:47 pm                  │
-│        🔀   ⏮    ⏯    ⏭   🔁                     │
-│   🔈 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 🔊             │
-└──────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│  ┌─────────┐  Title                  🔈 ━━━━━━━━━━ 🔊    │
+│  │         │  Artist — Album                             │
+│  │   art   │            ⏮    ⏯    ⏭                      │
+│  │         │  1:42 ━━━━━━━━●───────────────   -2:13      │
+│  └─────────┘                                             │
+└─────────────────────────────────────────────────────────┘
 ```
+
 Shuffle and repeat flank the transport group once M3 lands.
+
+**Geometry is derived, not tuned.** All of it lives in `PanelMetrics`, shared
+by the window and the layout rather than computed twice:
+
+- the artwork square is exactly the height of the stack beside it, so the two
+  columns start and finish level
+- the content height follows from the artwork plus its margins
+- one margin, equal on all four sides (17 pt), tunable with
+  `defaults write nz.slstudio.Cue PanelMargin 18`
+- the panel resizes **horizontally only**, from a minimum that always leaves
+  room for §4.6's 160 pt volume track beside the artwork and a readable title
+
+An intermediate version moved the volume between the title's line and a row of
+its own depending on width. It worked, but it was more machinery than the space
+it saved, and the fixed minimum width replaced it.
 
 ### 4.7 AirPlay picker ⏳ proposed
 - Popover listing `AirPlay devices` with name and kind. Multi-select sets `current AirPlay devices`.
@@ -635,9 +655,71 @@ M0 debug window is gone, as §6 intended, because the panel replaced it.
 - Implement §4.3, §4.4, and §4.6, using the layout in §4.6a.
 
 **Acceptance criteria**
-- Artwork appears within 300 ms of a track change, with a placeholder when none is available.
-- The transport buttons work and the play/pause icon matches Music's state, including changes made in Music itself.
-- Volume dragging is smooth and a change made in Music is reflected within 1 s.
+- [x] Artwork appears within 300 ms of a track change — **22–30 ms** measured.
+      The placeholder path is not yet verified; it needs a track with no art.
+- [x] The transport buttons work and the play/pause icon matches Music's state,
+      including changes made in Music itself. Confirmed by eye.
+- [~] Volume dragging is smooth — confirmed by eye, after the 1 Hz tick was made
+      to stand down during a drag. A change made in Music being reflected within
+      1 s is not yet verified; see §6.3.
+
+#### 6.3 M2 findings
+
+Measured: artwork fetch **22–30 ms** against §4.3's 300 ms criterion (a 318 KB
+payload), a volume write **8.3 ms**, panel CPU **~1.1%** while playing.
+
+**§4.6's "within 1 s" forced the hot path from one Apple Event to two.** Music
+posts no notification when its own volume changes, so the only way to notice is
+to look, and looking has to happen at least once a second. The second reference
+is the whole application `properties` record, which carries volume, mute,
+shuffle, repeat and player state together — one event for all of them, not one
+each. CPU was unaffected.
+
+**Mute cannot use Music's `mute` property.** `set mute to true` is refused with
+error **9038** on macOS 27; `tools/run-probe.sh --probe-mute` establishes that,
+and that setting it `false` only appears to work because it was already false.
+Mute is implemented as volume-to-zero with a remembered level — which is what
+§4.6's "restoring the previous level" describes anyway. A mute set inside Music
+is still honoured for display, since `pMut` is read every tick.
+
+**The invisible titlebar caused two separate bugs, both costing 32 pt.**
+`.titled` plus `.fullSizeContentView` means the content view spans the whole
+window, so window geometry always *looked* right:
+
+1. Assigning `panel.contentLayoutRect` to the hosting view's frame squashed the
+   content into 123 pt of a 155 pt window and cut the scrub bar in half.
+2. SwiftUI separately applies a safe-area inset for the titlebar, laying the
+   content out in 117 pt of 149 and overflowing it evenly — 16 pt each way,
+   which put the artwork 33 pt from the top and 1 pt from the bottom.
+   `.ignoresSafeArea()` is required, and removes the dead strip at the top too.
+
+**The artwork stopped keeping pace with track changes**, while the text did
+not. The text is set optimistically from the §3.2 payload, and the sync then
+decided whether to fetch artwork by comparing against the track that optimistic
+update had already changed — so the comparison always said "unchanged". The
+clock's jump-vs-sync decision had the identical flaw and was only saved by the
+snap threshold. Both now key off what was last *applied*, not off `track`.
+
+**Dragging a view that also handles clicks needs AppKit.** A SwiftUI
+`DragGesture` reports translation in the view's own coordinate space, and that
+space moves with the window — so moving the window changes the translation,
+which moves it again. The panel lagged the pointer and popped. `performDrag`
+runs AppKit's drag loop against screen coordinates, and click detection falls
+out of it: a press that left the window where it started was a click.
+
+**Measure the panel, do not reason about it.** Reasoning about the geometry was
+wrong three times in a row; one logged measurement settled it immediately.
+`PanelView` logs the stack's rendered height against the prediction and where
+the artwork square actually lands, and `PanelController` logs the window and
+hosting-view frames. An earlier version of that log printed `contentLayoutRect`
+and so looked plausible while hiding the bug — log what the content gets, not
+what the window reports.
+
+**Still to verify:**
+
+- [ ] §4.6's "a change made in Music is reflected within 1 s", which needs the
+      volume changed from inside Music itself.
+- [ ] §4.3's placeholder, which needs a track with no artwork.
 
 ### M3 — Shuffle, repeat, favourite
 - Implement §4.5.
