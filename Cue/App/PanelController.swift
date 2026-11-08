@@ -26,8 +26,25 @@ final class PanelController: NSObject, NSWindowDelegate {
                                 category: "Focus")
 
     private static let frameKey = "PanelFrame"
-    private static let defaultSize = NSSize(width: 420, height: 104)
-    private static let minWidth: CGFloat = 320
+    /// The content height, which depends on the layout the width selects.
+    ///
+    /// Wide — volume shares the title's line:
+    ///     padding 24 + artwork 64 + transport 46 + scrub 40 + 2 gaps 16 = 190
+    /// Narrow — volume gets its own row:
+    ///     the above + a gap and the volume row, 8 + 22                 = 220
+    ///
+    /// Checked at launch against the hosting view's own fitting size, and logged
+    /// if they disagree: an arithmetic slip here clips the bottom control off,
+    /// and the volume slider is the one that goes.
+    static let wideContentHeight: CGFloat = 190
+    static let narrowContentHeight: CGFloat = 220
+
+    static func contentHeight(forWidth width: CGFloat) -> CGFloat {
+        width >= PanelView.sideBySideWidth ? wideContentHeight : narrowContentHeight
+    }
+
+    private static let defaultSize = NSSize(width: 520, height: wideContentHeight)
+    private static let minWidth: CGFloat = 360
     private static let maxWidth: CGFloat = 900
 
     var isVisible: Bool { panel.isVisible }
@@ -54,9 +71,27 @@ final class PanelController: NSObject, NSWindowDelegate {
         // enough cost to dominate the panel's CPU while playing. The panel's size
         // is the user's to set (§4.1 makes it resizable), so nothing is lost.
         let hostingView = NSHostingView(rootView: PanelView(model: model))
-        hostingView.sizingOptions = []
+        // Publishes the content's minimum size so AppKit has something to
+        // constrain against. This was `[]` during the M1 CPU investigation,
+        // which turned out to make no measurable difference either way (3.5%)
+        // while removing the only thing stopping the panel being resized
+        // smaller than its own controls.
+        hostingView.sizingOptions = [.minSize]
         hostingView.autoresizingMask = [.width, .height]
         panel.contentView = hostingView
+
+        // Catch an arithmetic slip in contentHeight rather than ship a clipped
+        // panel. fittingSize can report 0 before layout, so only a positive
+        // value is trusted.
+        let fitting = hostingView.fittingSize
+        let expected = Self.contentHeight(forWidth: panel.frame.width)
+        if fitting.height > expected + 0.5 {
+            let message = String(
+                format: "LAYOUT: content wants %.1fpt but height is %.1fpt — bottom control will clip",
+                fitting.height, expected
+            )
+            logger.warning("\(message, privacy: .public)")
+        }
         panel.setFrame(Self.restoredFrame(), display: false)
         panel.delegate = self
     }
@@ -85,8 +120,15 @@ final class PanelController: NSObject, NSWindowDelegate {
         panel.backgroundColor = .clear
         panel.hasShadow = true
 
-        panel.minSize = NSSize(width: Self.minWidth, height: Self.defaultSize.height)
-        panel.maxSize = NSSize(width: Self.maxWidth, height: Self.defaultSize.height * 2)
+        // §4.1: the width is the user's to set, the height is fixed by content.
+        //
+        // minSize/maxSize alone proved insufficient — the panel could still be
+        // dragged thin and tall by its corner, because `sizingOptions = []`
+        // detaches the hosting view from Auto Layout and so removes the
+        // content's own minimum. `windowWillResize` below is the clamp that
+        // actually holds; these are belt and braces.
+        panel.minSize = NSSize(width: Self.minWidth, height: Self.wideContentHeight)
+        panel.maxSize = NSSize(width: Self.maxWidth, height: Self.narrowContentHeight)
 
         // §4.2's keyboard, wired even though the focus contract above makes it
         // hard to reach. It costs nothing and works if the panel is ever key.
@@ -94,6 +136,10 @@ final class PanelController: NSObject, NSWindowDelegate {
             guard let self else { return }
             let target = max(0, model.clock.position() + delta)
             Task { await self.model.commitSeek(to: target) }
+        }
+        panel.onTogglePlayPause = { [weak self] in
+            guard let self else { return }
+            Task { await self.model.togglePlayPause() }
         }
     }
 
@@ -129,6 +175,18 @@ final class PanelController: NSObject, NSWindowDelegate {
         isVisible ? hide() : show()
     }
 
+    /// The clamp that actually holds. Every resize, from any edge or corner,
+    /// arrives here, so the panel cannot be made narrower than its controls nor
+    /// any height but the one its content needs.
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        let width = min(max(frameSize.width, Self.minWidth), Self.maxWidth)
+        // The height follows from the width, because crossing
+        // PanelView.sideBySideWidth moves the volume control onto or off the
+        // title's line. The panel therefore changes height as it crosses that
+        // threshold, which is the layout change made visible.
+        return NSSize(width: width, height: Self.contentHeight(forWidth: width))
+    }
+
     // MARK: - Frame persistence (§4.1)
 
     func windowDidMove(_ notification: Notification) { saveFrame() }
@@ -144,7 +202,9 @@ final class PanelController: NSObject, NSWindowDelegate {
         }
         let frame = NSRectFromString(stored)
         guard frame.width > 0, frame.height > 0 else { return defaultFrame() }
-        return clamped(frame)
+        var result = clamped(frame)
+        result.size.height = contentHeight(forWidth: result.width)
+        return result
     }
 
     private static func defaultFrame() -> NSRect {
@@ -182,7 +242,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         let widest = screens.map(\.width).max() ?? maxWidth
         let tallest = screens.map(\.height).max() ?? result.height
         result.size.width = min(max(result.width, minWidth), min(maxWidth, widest))
-        result.size.height = min(max(result.height, defaultSize.height), tallest)
+        result.size.height = min(result.height, tallest)
 
         // Step 2: if it is substantially visible on some screen, the position is
         // one the user chose — including hanging off an edge — so keep it.
@@ -217,6 +277,8 @@ final class CuePanel: NSPanel {
 
     /// Seconds to seek by. Set by PanelController.
     var onSeekBy: ((TimeInterval) -> Void)?
+    /// §4.4: space toggles play/pause.
+    var onTogglePlayPause: (() -> Void)?
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
@@ -232,7 +294,12 @@ final class CuePanel: NSPanel {
         case .rightArrow:
             onSeekBy?(step)
         default:
-            super.keyDown(with: event)
+            // §4.4: space toggles play/pause.
+            if event.charactersIgnoringModifiers == " " {
+                onTogglePlayPause?()
+            } else {
+                super.keyDown(with: event)
+            }
         }
     }
 }

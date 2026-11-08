@@ -98,15 +98,34 @@ struct M0Benchmark {
         ),
         Variant(
             name: "SHIPPED-poll",
-            rationale: "What fetchPosition() actually sends, at 1 Hz. Must stay at one event.",
-            expectedEvents: 1,
-            source: MusicScript.fetchPosition.source
+            rationale: "What fetchAppState() sends at 1 Hz: the application properties record plus player position.",
+            expectedEvents: 2,
+            source: MusicScript.fetchAppState.source
         ),
         Variant(
             name: "SHIPPED-sync",
             rationale: "What fetchState() actually sends, on notification only.",
             expectedEvents: 3,
             source: MusicScript.fetchState.source
+        ),
+        Variant(
+            name: "ARTWORK-fetch",
+            rationale: "§4.3's artwork. One reference, but the only script that moves real bytes.",
+            expectedEvents: 1,
+            source: MusicScript.fetchArtwork.source
+        ),
+        Variant(
+            name: "WRITE-volume-roundtrip",
+            rationale: "A volume read plus a write of the same value, so nothing changes. §4.6 sends writes at up to 15 Hz while dragging, so the per-event cost matters.",
+            expectedEvents: 2,
+            source: """
+            with timeout of 5 seconds
+                tell application id "com.apple.Music"
+                    set v to sound volume
+                    set sound volume to v
+                end tell
+            end timeout
+            """
         ),
     ]
 }

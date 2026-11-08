@@ -23,10 +23,9 @@
 import Foundation
 
 enum MusicScript: String, CaseIterable, Sendable {
-    /// §3.3's 1 Hz hot path: `player position` and nothing else. One reference,
-    /// one Apple Event, ~8.3 ms. Adding a field here doubles the cost of every
-    /// tick, so do not.
-    case fetchPosition
+    /// §3.3's 1 Hz hot path: the application `properties` record plus
+    /// `player position`. Two references, ~16.7 ms.
+    case fetchAppState
     /// §3.3's full sync, off the timer. Three references, ~25 ms.
     case fetchState
     case playPause
@@ -34,6 +33,11 @@ enum MusicScript: String, CaseIterable, Sendable {
     case previousTrack
     /// Takes one argument, so it is invoked as a subroutine rather than recompiled.
     case seek
+    /// §4.3's artwork, fetched on track change only — never on the poll.
+    case fetchArtwork
+    /// §4.6, both argument-taking.
+    case setVolume
+    case setMute
     /// M0 only: confirms the favourite property name at runtime.
     case probeFavourite
 
@@ -42,18 +46,23 @@ enum MusicScript: String, CaseIterable, Sendable {
     var handlerName: String? {
         switch self {
         case .seek: "seekto"
+        case .setVolume: "setvolume"
+        case .setMute: "setmute"
         default: nil
         }
     }
 
     var source: String {
         switch self {
-        case .fetchPosition: Self.fetchPositionSource
+        case .fetchAppState: Self.fetchAppStateSource
         case .fetchState: Self.fetchStateSource
         case .playPause: Self.playPauseSource
         case .nextTrack: Self.nextTrackSource
         case .previousTrack: Self.previousTrackSource
         case .seek: Self.seekSource
+        case .fetchArtwork: Self.fetchArtworkSource
+        case .setVolume: Self.setVolumeSource
+        case .setMute: Self.setMuteSource
         case .probeFavourite: Self.probeFavouriteSource
         }
     }
@@ -63,16 +72,29 @@ enum MusicScript: String, CaseIterable, Sendable {
 
 extension MusicScript {
 
-    /// §3.3's hot path. Deliberately trivial: one property, one event.
+    /// §3.3's hot path. Two references, deliberately — see the note below.
     ///
-    /// Two seconds, because this runs at 1 Hz — a read slower than that has
+    /// It was one (`player position` alone, ~8.3 ms) until §4.6's acceptance
+    /// criterion forced the issue: "a change made in Music is reflected within
+    /// 1 s". Music posts no notification when its volume, shuffle or repeat
+    /// change, so the only way to notice is to look, and looking has to happen
+    /// at least once a second to meet that.
+    ///
+    /// The application `properties` record costs the same single event as
+    /// reading `sound volume` alone, and carries volume, mute, shuffle, repeat
+    /// and player state together — so the fix is one extra reference for all of
+    /// them, not one per field. `player position` stays separate because it is
+    /// not in that record (see the full sync below).
+    ///
+    /// Two seconds, because this runs at 1 Hz: a read slower than that has
     /// already missed its slot, and PlaybackClock interpolates over the gap.
-    static let fetchPositionSource = """
+    static let fetchAppStateSource = """
     with timeout of 2 seconds
         tell application id "com.apple.Music"
+            set appProps to properties
             set pos to player position
-            if pos is missing value then return -1
-            return pos
+            if pos is missing value then set pos to -1
+            return {appProps, pos}
         end tell
     end timeout
     """
@@ -136,6 +158,55 @@ extension MusicScript {
             tell application id "com.apple.Music" to set player position to p
         end timeout
     end seekto
+    """
+
+    /// §4.3's artwork.
+    ///
+    /// `raw data` (`pRaw`), not `data` (`pPCT`): the latter is typed `picture`,
+    /// while the former hands back the original bytes, which `NSImage` decodes
+    /// directly. `artworks` is the plural form of the element.
+    ///
+    /// Returns `missing value` rather than erroring when a track carries no art,
+    /// which some streamed catalogue tracks do — §4.3's placeholder case. Ten
+    /// seconds, because this moves real bytes, unlike every other script here.
+    static let fetchArtworkSource = """
+    with timeout of 10 seconds
+        tell application id "com.apple.Music"
+            set artData to missing value
+            try
+                tell current track
+                    if (count of artworks) > 0 then
+                        set artData to raw data of artwork 1
+                    end if
+                end tell
+            end try
+            return artData
+        end tell
+    end timeout
+    """
+
+    /// §4.6. Clamped here as well as in Swift: Music silently ignores an
+    /// out-of-range value rather than complaining, which would look like the
+    /// slider having no effect.
+    static let setVolumeSource = """
+    on setvolume(v)
+        with timeout of 5 seconds
+            tell application id "com.apple.Music"
+                if v < 0 then set v to 0
+                if v > 100 then set v to 100
+                set sound volume to (v as integer)
+            end tell
+        end timeout
+    end setvolume
+    """
+
+    /// §4.6's mute, which is Music's own `mute` rather than system audio.
+    static let setMuteSource = """
+    on setmute(m)
+        with timeout of 5 seconds
+            tell application id "com.apple.Music" to set mute to m
+        end timeout
+    end setmute
     """
 
     /// M0's open question from §4.5: is the property `favorited` or the older `loved`?

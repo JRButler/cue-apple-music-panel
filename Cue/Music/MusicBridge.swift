@@ -137,15 +137,20 @@ final class MusicBridge {
 
     // MARK: - Reads
 
-    /// §3.3's 1 Hz hot path. One reference, one Apple Event, ~8.3 ms.
+    /// Everything the 1 Hz tick needs, minus the track: two references, ~16.7 ms.
     ///
-    /// Returns nil when Music reports no position, which it does while stopped.
-    /// Keep this method trivial: every field added here is another ~8.3 ms on
-    /// the main thread, every second.
-    func fetchPosition() async throws -> TimeInterval? {
-        let descriptor = try run(.fetchPosition)
-        let value = descriptor.doubleValue
-        return value >= 0 ? value : nil
+    /// Returns the application state and the position together. The track record
+    /// is deliberately excluded — it only changes when the track changes, which
+    /// arrives as a notification (§3.2).
+    func fetchAppState() async throws -> MusicState {
+        let list = try run(.fetchAppState)
+        guard list.numberOfItems == 2, let appRecord = list.atIndex(1) else {
+            throw MusicBridgeError.malformedResult(
+                "fetchAppState returned \(list.numberOfItems) elements, expected 2"
+            )
+        }
+        let rawPosition = list.atIndex(2)?.doubleValue ?? -1
+        return Self.appState(from: appRecord, position: rawPosition, track: nil)
     }
 
     /// §3.3's full sync. Three references (~25 ms), driven by notifications and
@@ -165,25 +170,33 @@ final class MusicBridge {
 
         let rawPosition = list.atIndex(2)?.doubleValue ?? -1
         let trackRecord = list.atIndex(3).flatMap { Self.isPresent($0) ? $0 : nil }
-
-        return MusicState(
-            playerState: PlayerState(enumCode: Self.enumCode(appRecord, AppKey.playerState)),
-            position: rawPosition >= 0 ? rawPosition : nil,
-            volume: max(0, min(100, Self.integer(appRecord, AppKey.volume) ?? 0)),
-            isShuffling: Self.flag(appRecord, AppKey.shuffleEnabled) ?? false,
-            repeatMode: RepeatMode(enumCode: Self.enumCode(appRecord, AppKey.songRepeat)),
+        return Self.appState(
+            from: appRecord,
+            position: rawPosition,
             track: trackRecord.map(Self.track(from:))
+        )
+    }
+
+    /// One place that turns an application `properties` record into a state, so
+    /// the tick and the full sync cannot drift apart in how they read it.
+    private static func appState(
+        from appRecord: NSAppleEventDescriptor,
+        position rawPosition: Double,
+        track: TrackInfo?
+    ) -> MusicState {
+        MusicState(
+            playerState: PlayerState(enumCode: enumCode(appRecord, AppKey.playerState)),
+            position: rawPosition >= 0 ? rawPosition : nil,
+            volume: max(0, min(100, integer(appRecord, AppKey.volume) ?? 0)),
+            isMuted: flag(appRecord, AppKey.mute) ?? false,
+            isShuffling: flag(appRecord, AppKey.shuffleEnabled) ?? false,
+            repeatMode: RepeatMode(enumCode: enumCode(appRecord, AppKey.songRepeat)),
+            track: track
         )
     }
 
     /// Music's own mute state (`pMut`), which arrives free in the application
     /// record. §4.6's mute button is M2; this is here so it need not be re-read.
-    func fetchMuted() async throws -> Bool {
-        let list = try run(.fetchState)
-        guard let appRecord = list.atIndex(1) else { return false }
-        return Self.flag(appRecord, AppKey.mute) ?? false
-    }
-
     // MARK: - Record parsing
     //
     // Each accessor matches the descriptor type observed with `--dump-records`:
@@ -253,6 +266,28 @@ final class MusicBridge {
     /// §4.2: exactly one of these per drag, sent on release.
     func seek(to seconds: TimeInterval) async throws {
         _ = try run(.seek, arguments: [NSAppleEventDescriptor(double: max(0, seconds))])
+    }
+
+    /// §4.3's artwork bytes, or nil when the track carries none.
+    ///
+    /// Called on track change only, never from the 1 Hz tick — it is the one
+    /// script here that moves a non-trivial payload, and §4.3 says so explicitly.
+    func fetchArtwork() async throws -> Data? {
+        let descriptor = try run(.fetchArtwork)
+        guard Self.isPresent(descriptor) else { return nil }
+        let data = descriptor.data
+        return data.isEmpty ? nil : data
+    }
+
+    /// §4.6. Music's own output level, 0–100, not the system volume.
+    func setVolume(_ volume: Int) async throws {
+        let clamped = min(max(0, volume), 100)
+        _ = try run(.setVolume, arguments: [NSAppleEventDescriptor(int32: Int32(clamped))])
+    }
+
+    /// §4.6's mute, restoring the previous level being the caller's job.
+    func setMuted(_ muted: Bool) async throws {
+        _ = try run(.setMute, arguments: [NSAppleEventDescriptor(boolean: muted)])
     }
 
     // MARK: - M0 diagnostics

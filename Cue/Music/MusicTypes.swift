@@ -121,6 +121,8 @@ struct MusicState: Sendable, Equatable {
     var position: TimeInterval?
     /// Music's own output level, 0–100. Not the system volume.
     var volume: Int
+    /// Music's own mute (`pMut`), which arrives free in the application record.
+    var isMuted: Bool
     var isShuffling: Bool
     var repeatMode: RepeatMode
     var track: TrackInfo?
@@ -129,6 +131,7 @@ struct MusicState: Sendable, Equatable {
         playerState: .stopped,
         position: nil,
         volume: 0,
+        isMuted: false,
         isShuffling: false,
         repeatMode: .off,
         track: nil

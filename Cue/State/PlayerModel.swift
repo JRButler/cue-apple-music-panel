@@ -7,12 +7,16 @@
 //
 //  The read strategy is §7.1's decision, and the split is load-bearing:
 //
-//    fetchPosition()  one Apple Event  ~8.3 ms   on the 1 Hz timer
-//    fetchState()     three events     ~25 ms    on notification or user action
+//    fetchAppState()  two events    ~16.7 ms  on the 1 Hz timer
+//    fetchState()     three events  ~25 ms    on notification or user action
 //
-//  Adding a field to the timer path costs ~8.3 ms of blocked main thread every
-//  second. If volume or shuffle need to track changes made inside Music more
-//  closely, add a slow secondary timer — do not widen the hot path.
+//  The timer path was one event until §4.6's "reflected within 1 s" criterion
+//  forced a second: Music posts no notification when its own volume changes, so
+//  the only way to notice is to look. The second reference is the whole
+//  application `properties` record, which carries volume, mute, shuffle, repeat
+//  and player state for that one event — so it is one reference for all of them,
+//  not one each. Keep it that way: a per-field read here costs ~8.3 ms of
+//  blocked main thread every second.
 //
 
 import AppKit
@@ -39,8 +43,12 @@ final class PlayerModel {
     private(set) var playerState: PlayerState = .stopped
     private(set) var track: TrackInfo?
     private(set) var volume: Int = 0
+    private(set) var isMuted = false
     private(set) var isShuffling = false
     private(set) var repeatMode: RepeatMode = .off
+
+    /// §4.3's artwork for the current track, or nil for the placeholder case.
+    private(set) var artwork: NSImage?
 
     /// The interpolated clock. Read by the scrub bar for its animation targets,
     /// and still the authority on "where are we" for seeks and labels.
@@ -67,6 +75,16 @@ final class PlayerModel {
 
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "nz.slstudio.Cue",
                                 category: "PlayerModel")
+
+    /// §4.3: the last 20 tracks, so flicking back and forth does not re-fetch.
+    private let artworkCache = ArtworkCache()
+    /// Cancels an in-flight fetch when the track changes again first.
+    private var artworkTask: Task<Void, Never>?
+
+    /// §4.6: a drag owns the volume until released, so a sync must not fight it.
+    private var isAdjustingVolume = false
+    private var lastVolumeSend: ContinuousClock.Instant?
+    private var pendingVolumeSend: Task<Void, Never>?
 
     /// Every seek this session. §4.2 requires exactly one per drag, and the only
     /// way to know is to count them — so each is logged and tallied.
@@ -104,6 +122,8 @@ final class PlayerModel {
     func stop() {
         events.stop()
         stopPolling()
+        artworkTask?.cancel()
+        pendingVolumeSend?.cancel()
     }
 
     /// §3.3: while the panel is hidden, stop polling entirely.
@@ -151,7 +171,13 @@ final class PlayerModel {
 
         playerState = state.playerState
         track = state.track
-        volume = state.volume
+        // §4.6: "read the volume on each sync" — except while the user is
+        // dragging it, when their hand is the authority, not Music.
+        if !isAdjustingVolume {
+            volume = state.volume
+            musicReportsMuted = state.isMuted
+            isMuted = isEffectivelyMuted
+        }
         isShuffling = state.isShuffling
         repeatMode = state.repeatMode
 
@@ -167,7 +193,167 @@ final class PlayerModel {
             clock.setAdvancing(false, position: 0)
         }
 
+        if trackChanged {
+            loadArtwork(for: state.track)
+        }
+
         updatePolling()
+    }
+
+    // MARK: - Artwork (§4.3)
+
+    /// Fetched on track change only, never from the tick.
+    ///
+    /// A cache hit paints immediately; a miss goes to Music once. Tracks with no
+    /// artwork are cached as such, so the placeholder case does not re-ask on
+    /// every track change back to the same song.
+    private func loadArtwork(for track: TrackInfo?) {
+        artworkTask?.cancel()
+        artworkTask = nil
+
+        guard let track else {
+            artwork = nil
+            return
+        }
+
+        if let cached = artworkCache.lookup(track.id) {
+            artwork = cached
+            logger.notice("artwork cache hit for \(track.id, privacy: .public)")
+            return
+        }
+
+        // Clear rather than leave the previous track's art showing.
+        artwork = nil
+
+        artworkTask = Task { [weak self] in
+            guard let self else { return }
+            let started = ContinuousClock.now
+            do {
+                let data = try await bridge.fetchArtwork()
+                guard !Task.isCancelled else { return }
+
+                let image = data.flatMap { NSImage(data: $0) }
+                artworkCache.store(image, for: track.id)
+
+                // Only paint it if the track has not moved on underneath us.
+                guard self.track?.id == track.id else { return }
+                artwork = image
+
+                let elapsed = ContinuousClock.now - started
+                let ms = Double(elapsed.components.seconds) * 1000
+                    + Double(elapsed.components.attoseconds) / 1e15
+                let size = data?.count ?? 0
+                logger.notice("\(String(format: "artwork fetched in %.1f ms (%d bytes)", ms, size), privacy: .public)")
+            } catch {
+                guard !Task.isCancelled else { return }
+                // No artwork is a normal outcome, not a failure to report.
+                artworkCache.store(nil, for: track.id)
+                logger.notice("artwork unavailable: \((error as? MusicBridgeError)?.localizedDescription ?? "\(error)", privacy: .public)")
+            }
+        }
+    }
+
+    // MARK: - Volume (§4.6)
+
+    /// Called continuously while dragging. Updates the UI at once and sends to
+    /// Music at no more than 15 Hz, as §4.6 requires.
+    func setVolume(_ newValue: Int, committing: Bool) {
+        let clamped = min(max(0, newValue), 100)
+        volume = clamped
+        isAdjustingVolume = !committing
+
+        if committing {
+            // §4.6's final value on release, always sent regardless of timing.
+            pendingVolumeSend?.cancel()
+            pendingVolumeSend = nil
+            lastVolumeSend = nil
+            Task {
+                await send(volume: clamped)
+                // The tick was suppressed during the drag, so catch up now.
+                await resync()
+            }
+            return
+        }
+
+        // 15 Hz ceiling. A value arriving inside the window is not dropped; it
+        // is deferred, so the last position of the drag always gets through.
+        let minimumGap: TimeInterval = 1.0 / 15.0
+        let now = ContinuousClock.now
+        if let last = lastVolumeSend {
+            let gap = now - last
+            let seconds = Double(gap.components.seconds)
+                + Double(gap.components.attoseconds) / 1e18
+            if seconds < minimumGap {
+                pendingVolumeSend?.cancel()
+                pendingVolumeSend = Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(minimumGap - seconds))
+                    guard !Task.isCancelled, let self else { return }
+                    await send(volume: self.volume)
+                }
+                return
+            }
+        }
+        lastVolumeSend = now
+        Task { await send(volume: clamped) }
+    }
+
+    private func send(volume value: Int) async {
+        lastVolumeSend = .now
+        do {
+            try await bridge.setVolume(value)
+        } catch {
+            logger.error("setVolume failed: \((error as? MusicBridgeError)?.localizedDescription ?? "\(error)", privacy: .public)")
+        }
+    }
+
+    /// The level to come back to when unmuting. Persisted, so a mute that
+    /// outlives a relaunch can still be undone.
+    private var premuteVolume: Int {
+        get { UserDefaults.standard.object(forKey: "PremuteVolume") as? Int ?? 50 }
+        set { UserDefaults.standard.set(newValue, forKey: "PremuteVolume") }
+    }
+
+    /// §4.6: clicking the low speaker toggles mute.
+    ///
+    /// Implemented by taking the volume to zero and restoring it, NOT via
+    /// Music's `mute` property. Music refuses `set mute to true` with error 9038
+    /// on macOS 27 — verified with `tools/run-probe.sh --probe-mute`, where
+    /// setting it `false` appears to work only because it was already false.
+    /// Since §4.6 asks for "the previous level" to be restored anyway, keeping
+    /// that level ourselves is both the only option and the closer reading.
+    ///
+    /// A mute set from inside Music is still honoured for display, because the
+    /// application record's `pMut` is read on every tick; clearing that one does
+    /// work, so it is cleared on unmute.
+    func toggleMute() async {
+        if isEffectivelyMuted {
+            let restored = max(1, premuteVolume)
+            volume = restored
+            isMuted = false
+            await send(volume: restored)
+            // Only meaningful if Music's own mute was the thing muting us.
+            if musicReportsMuted {
+                try? await bridge.setMuted(false)
+            }
+            logger.notice("unmuted, restored to \(restored, privacy: .public)")
+        } else {
+            premuteVolume = max(1, volume)
+            volume = 0
+            isMuted = true
+            await send(volume: 0)
+            logger.notice("muted, remembering \(self.premuteVolume, privacy: .public)")
+        }
+    }
+
+    /// True when nothing is audible, however it got that way.
+    var isEffectivelyMuted: Bool { volume == 0 || musicReportsMuted }
+
+    /// Music's own `mute`, as last read from the application record.
+    private(set) var musicReportsMuted = false
+
+    /// §4.6: scrolling over the slider moves it in steps of 2.
+    func nudgeVolume(by delta: Int) {
+        setVolume(volume + delta, committing: true)
     }
 
     /// §3.2's payload arrives before any round trip, so the panel can repaint
@@ -231,12 +417,23 @@ final class PlayerModel {
     /// measured against the real app, rather than against a simulation.
     private(set) var worstDriftSeconds: TimeInterval = 0
 
-    /// One hot-path read. Only `player position` — see the note at the top.
+    /// The hot-path read: two references, no track record. See the note at the
+    /// top, and `MusicScript.fetchAppState` for why it is two rather than one.
     private func tick() async {
         // §4.2: a drag owns the position until it is committed.
         guard !clock.isSuppressed else { return }
+
+        // And while the volume is being dragged, stay off the main thread
+        // altogether. §4.6 sends volume writes at up to 15 Hz — about 125 ms of
+        // blocked main thread per second — and this tick's two references add
+        // another 17 ms on top. Competing for the same thread is what made the
+        // volume slider hitch. The clock keeps interpolating meanwhile, so the
+        // scrub bar carries on, and releasing the slider resyncs.
+        guard !isAdjustingVolume else { return }
         do {
-            if let position = try await bridge.fetchPosition() {
+            let state = try await bridge.fetchAppState()
+
+            if let position = state.position {
                 // Compare before syncing: this is the error the user was seeing.
                 let rendered = clock.position()
                 let drift = abs(position - rendered)
@@ -251,7 +448,28 @@ final class PlayerModel {
                 )
                 logger.notice("\(line, privacy: .public)")
 
-                clock.sync(position: position, isAdvancing: playerState.isAdvancing)
+                clock.sync(position: position, isAdvancing: state.playerState.isAdvancing)
+            }
+
+            // §4.6's criterion: a volume change made inside Music has to show up
+            // within a second, and this is the only thing that notices it.
+            if !isAdjustingVolume {
+                if state.volume != volume || state.isMuted != musicReportsMuted {
+                    logger.notice("external volume change: \(self.volume, privacy: .public) -> \(state.volume, privacy: .public), music mute \(state.isMuted, privacy: .public)")
+                }
+                volume = state.volume
+                musicReportsMuted = state.isMuted
+                isMuted = isEffectivelyMuted
+            }
+            isShuffling = state.isShuffling
+            repeatMode = state.repeatMode
+
+            // A play/pause made inside Music does post a notification, but the
+            // tick is a cheap second opinion and keeps §4.4's icon honest.
+            if state.playerState != playerState {
+                playerState = state.playerState
+                clock.setAdvancing(state.playerState.isAdvancing)
+                updatePolling()
             }
         } catch MusicBridgeError.musicNotRunning {
             connection = .musicNotRunning
@@ -266,6 +484,43 @@ final class PlayerModel {
     }
 
     // MARK: - Commands
+
+    // MARK: - Transport (§4.4)
+
+    /// §4.4: the icon updates optimistically and reconciles on the next sync, so
+    /// the button feels instant despite the ~8 ms round trip.
+    func togglePlayPause() async {
+        let wasAdvancing = playerState.isAdvancing
+        playerState = wasAdvancing ? .paused : .playing
+        clock.setAdvancing(!wasAdvancing)
+        updatePolling()
+
+        do {
+            try await bridge.playPause()
+        } catch {
+            playerState = wasAdvancing ? .playing : .paused
+            clock.setAdvancing(wasAdvancing)
+            updatePolling()
+            logger.error("playPause failed: \((error as? MusicBridgeError)?.localizedDescription ?? "\(error)", privacy: .public)")
+        }
+        await resync()
+    }
+
+    func nextTrack() async {
+        do { try await bridge.next() } catch { logFailure(error, "next") }
+        await resync()
+    }
+
+    /// §4.4: Music's own `previous track` already restarts the track when more
+    /// than a few seconds in, so this does not second-guess it.
+    func previousTrack() async {
+        do { try await bridge.previous() } catch { logFailure(error, "previous") }
+        await resync()
+    }
+
+    private func logFailure(_ error: Error, _ action: String) {
+        logger.error("\(action, privacy: .public) failed: \((error as? MusicBridgeError)?.localizedDescription ?? "\(error)", privacy: .public)")
+    }
 
     /// §4.2: exactly one `set player position` per drag, on release.
     func commitSeek(to position: TimeInterval) async {

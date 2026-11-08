@@ -395,6 +395,70 @@ final class M0Probe {
         printVerdict()
     }
 
+    /// §4.6's mute refuses with Music error 9038. This tries the plausible
+    /// formulations against the running app and reports which, if any, work —
+    /// including whether the problem is the value being passed as a subroutine
+    /// argument rather than written literally.
+    func runMuteProbe() async {
+        heading("mute (§4.6) — why does Music refuse?")
+
+        guard controller.bridge.isMusicRunning else {
+            fail("Music is not running")
+            printVerdict()
+            return
+        }
+
+        let attempts: [(String, String)] = [
+            ("read mute", """
+            tell application id "com.apple.Music" to return mute
+            """),
+            ("set mute to true, literal", """
+            tell application id "com.apple.Music" to set mute to true
+            """),
+            ("set mute to false, literal", """
+            tell application id "com.apple.Music" to set mute to false
+            """),
+            ("toggle via read-then-write", """
+            tell application id "com.apple.Music"
+                set m to mute
+                set mute to (not m)
+                return mute
+            end tell
+            """),
+            ("set mute of application explicitly", """
+            tell application id "com.apple.Music"
+                set mute of it to true
+                return mute
+            end tell
+            """),
+            ("read sound volume", """
+            tell application id "com.apple.Music" to return sound volume
+            """),
+            ("set sound volume to its own value", """
+            tell application id "com.apple.Music"
+                set v to sound volume
+                set sound volume to v
+                return sound volume
+            end tell
+            """),
+        ]
+
+        for (label, source) in attempts {
+            do {
+                let descriptor = try controller.bridge.rawDescriptor(source: source)
+                let rendered = descriptor.stringValue
+                    ?? (descriptor.descriptorType == typeBoolean ? "\(descriptor.booleanValue)" : "\(descriptor.int32Value)")
+                pass("\(label) → \(rendered)")
+            } catch {
+                let described = (error as? MusicBridgeError)?.localizedDescription ?? "\(error)"
+                fail("\(label) → \(described)")
+            }
+        }
+
+        note("if the literal set fails too, Music is refusing regardless of how we pass the value")
+        printVerdict()
+    }
+
     // MARK: - Checks
 
     /// Verifies every row of §3.1's error table without provoking each condition.

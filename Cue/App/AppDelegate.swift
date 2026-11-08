@@ -93,6 +93,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             exit(probe.exitCode)
         }
 
+        if options.isMuteProbe {
+            Task {
+                let probe = M0Probe(controller: controller, options: options)
+                await probe.runMuteProbe()
+                exit(probe.exitCode)
+            }
+            return
+        }
+
         if options.isDumpRecords {
             Task {
                 let probe = M0Probe(controller: controller, options: options)
@@ -137,6 +146,8 @@ struct LaunchOptions: Sendable {
     var isDumpRecords = false
     /// Runs PlaybackClock's numeric checks. Needs neither Music nor permission.
     var isTestClock = false
+    /// Investigates §4.6's mute refusal.
+    var isMuteProbe = false
     /// Seconds to keep listening for `playerInfo` after the probe's fixed
     /// sequence, so a track change can be caught and timed.
     var listenSeconds: Int = 0
@@ -144,7 +155,7 @@ struct LaunchOptions: Sendable {
 
     /// True for any mode that should not build a panel.
     var isDiagnostic: Bool {
-        isProbe || isGrant || isDeny || isBench || isWatch || isDumpRecords || isTestClock
+        isProbe || isGrant || isDeny || isBench || isWatch || isDumpRecords || isTestClock || isMuteProbe
     }
 
     init(arguments: [String]) {
@@ -165,6 +176,8 @@ struct LaunchOptions: Sendable {
                 isDumpRecords = true
             case "--test-clock":
                 isTestClock = true
+            case "--probe-mute":
+                isMuteProbe = true
             case "--listen":
                 if let value = iterator.next(), let seconds = Int(value) { listenSeconds = seconds }
             case "--samples":
