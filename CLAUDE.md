@@ -960,6 +960,36 @@ real method over reproducing what it does.
   identical and the control read as laggy rather than three-state. Rendering
   the glyphs at 12/14/16/18 pt settled it: 16 pt is where it becomes readable.
 
+#### 6.6 Field report: a 3.7-second flash of "Music isn't open"
+
+Seen while tracks were playing. The log:
+
+```
+11:32:50.072  connection: connected -> musicNotRunning
+11:32:50.072  recovery: retrying every 3.000000s
+11:32:53.740  connection: musicNotRunning -> connected
+```
+
+Nothing was wrong with Music. A single `isMusicRunning` lookup came back
+empty — `NSRunningApplication` does that occasionally — and two choices turned
+an instant into 3.7 seconds of wrong screen:
+
+- **A single observation was trusted.** A problem must now persist for 1.5 s
+  before the UI shows it. Being briefly out of date beats replacing the whole
+  panel for a glitch.
+- **The first retry was 3 s away**, which is literally the gap in the log.
+  Retries now start at 0.4 s and back off to 3 s only after six attempts.
+
+Together a blip is caught at +0.4 s, inside the grace, and never displayed.
+
+**The grace applies to guesses, not to facts.** `NSWorkspace`'s
+`didTerminateApplicationNotification` means Music really has quit, so that path
+shows the placeholder at once. Same distinction as -609 (a stale connection)
+versus -600 (the process is gone).
+
+Each path now logs `trouble (<source>)` when it trips, because the previous
+round left no way to tell whether the guard or the tick had fired.
+
 ### M4 — AirPlay
 - Implement §4.7.
 

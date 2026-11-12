@@ -103,9 +103,27 @@ final class PlayerModel {
     /// Retries while anything other than `.connected`. See `startRecovery`.
     private var recoveryTask: Task<Void, Never>?
 
-    /// How often to retry while disconnected. Slow enough to be free, often
-    /// enough that the panel is never wrong for long.
-    private static let recoveryInterval: TimeInterval = 3
+    /// Retry quickly at first, then back off.
+    ///
+    /// A single flat 3 s interval was why a momentary blip showed for 3.7
+    /// seconds: nothing was wrong with Music, one `isMusicRunning` lookup came
+    /// back empty, and the first re-check was three seconds away. Most
+    /// failures are instantaneous, so the first few retries are fast and the
+    /// interval only grows if the problem is real.
+    private static let fastRecoveryInterval: TimeInterval = 0.4
+    private static let slowRecoveryInterval: TimeInterval = 3
+    private static let fastRetries = 6
+
+    /// How long a problem must persist before the UI is allowed to show it.
+    ///
+    /// Replacing the whole panel for a transient glitch is worse than being
+    /// briefly out of date, so the state is held back until it has been true
+    /// for this long. Combined with the fast retries above, a blip is now
+    /// corrected before it is ever displayed.
+    private static let graceBeforeReporting: TimeInterval = 1.5
+
+    /// When the current run of failures began, or nil while healthy.
+    private var troubleSince: ContinuousClock.Instant?
 
     /// §4.6: a drag owns the volume until released, so a sync must not fight it.
     private var isAdjustingVolume = false
@@ -135,6 +153,11 @@ final class PlayerModel {
             },
             musicTerminated: { [weak self] in
                 guard let self else { return }
+                // No grace period here. NSWorkspace saying Music has quit is
+                // authoritative, unlike an `isMusicRunning` lookup that may
+                // simply have come back empty for a moment — so this shows the
+                // placeholder at once rather than waiting to be sure.
+                troubleSince = nil
                 connection = .musicNotRunning
                 track = nil
                 playerState = .stopped
@@ -175,6 +198,37 @@ final class PlayerModel {
         }
     }
 
+    /// Records a problem, and surfaces it only once it has persisted.
+    /// Returns immediately either way; the recovery loop does the retrying.
+    private func reportProblem(_ problem: Connection, from source: String) {
+        let now = ContinuousClock.now
+        if troubleSince == nil {
+            troubleSince = now
+            logger.notice("trouble (\(source, privacy: .public)): \(String(describing: problem), privacy: .public) — holding the UI for now")
+            startRecovery()
+            return
+        }
+
+        let elapsed = now - (troubleSince ?? now)
+        let seconds = Double(elapsed.components.seconds)
+            + Double(elapsed.components.attoseconds) / 1e18
+        guard seconds >= Self.graceBeforeReporting else {
+            startRecovery()
+            return
+        }
+        connection = problem
+        stopPolling()
+    }
+
+    /// Clears any run of failures and marks us healthy.
+    private func reportHealthy() {
+        if troubleSince != nil {
+            logger.notice("trouble cleared")
+        }
+        troubleSince = nil
+        connection = .connected
+    }
+
     // MARK: - Recovery
     //
     // No connection state is terminal. This is the bug that put "Music isn't
@@ -186,11 +240,16 @@ final class PlayerModel {
 
     private func startRecovery() {
         guard recoveryTask == nil else { return }
-        logger.notice("recovery: retrying every \(Self.recoveryInterval, privacy: .public)s")
+        logger.notice("recovery: retrying")
         recoveryTask = Task { [weak self] in
+            var attempt = 0
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(Self.recoveryInterval))
+                let interval = attempt < Self.fastRetries
+                    ? Self.fastRecoveryInterval
+                    : Self.slowRecoveryInterval
+                try? await Task.sleep(for: .seconds(interval))
                 guard !Task.isCancelled, let self else { return }
+                attempt += 1
                 await resync()
             }
         }
@@ -208,28 +267,26 @@ final class PlayerModel {
     /// The full three-event sync. Not on the timer.
     func resync() async {
         guard bridge.isMusicRunning else {
-            connection = .musicNotRunning
-            track = nil
-            playerState = .stopped
-            clock.reset()
-            stopPolling()
+            reportProblem(.musicNotRunning, from: "isMusicRunning guard")
             return
         }
 
         do {
             let state = try await bridge.fetchState()
             apply(state)
-            connection = .connected
+            reportHealthy()
         } catch MusicBridgeError.automationDenied {
+            // Not transient and not guessable: show it at once.
+            troubleSince = nil
             connection = .automationDenied
             stopPolling()
         } catch MusicBridgeError.musicNotRunning {
-            connection = .musicNotRunning
-            stopPolling()
+            reportProblem(.musicNotRunning, from: "resync -600")
+        } catch MusicBridgeError.connectionLost {
+            reportProblem(.failed("Reconnecting to Music…"), from: "resync -609")
         } catch {
             let described = (error as? MusicBridgeError)?.localizedDescription ?? error.localizedDescription
-            connection = .failed(described)
-            stopPolling()
+            reportProblem(.failed(described), from: "resync")
         }
     }
 
@@ -588,17 +645,13 @@ final class PlayerModel {
                 updatePolling()
             }
         } catch MusicBridgeError.musicNotRunning {
-            connection = .musicNotRunning
-            stopPolling()
+            reportProblem(.musicNotRunning, from: "tick -600")
         } catch MusicBridgeError.automationDenied {
+            troubleSince = nil
             connection = .automationDenied
             stopPolling()
         } catch MusicBridgeError.connectionLost {
-            // Stale Apple Event connection, not an absent app. Hand it to the
-            // recovery loop instead of claiming Music has gone.
-            logger.notice("tick: connection lost, handing over to recovery")
-            connection = .failed("Reconnecting to Music…")
-            stopPolling()
+            reportProblem(.failed("Reconnecting to Music…"), from: "tick -609")
         } catch {
             // A single dropped tick is not worth surfacing; the clock carries on
             // and the next tick or notification corrects it.
