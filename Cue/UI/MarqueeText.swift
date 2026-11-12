@@ -50,60 +50,76 @@ struct MarqueeText: NSViewRepresentable {
 
 final class MarqueeView: NSView {
 
-    /// Two identical labels, the second trailing the first by `gap`, so the
-    /// text can wrap without a visible seam.
-    private let track = NSView()
-    private let label = NSTextField(labelWithString: "")
-    private let trailing = NSTextField(labelWithString: "")
+    /// CATextLayer, not NSTextField.
+    ///
+    /// An NSTextField draws through a cell, and the cell caches a layout from
+    /// its previous frame. Giving it a wider frame was not enough: it kept
+    /// rasterising the older, narrower layout, so the marquee scrolled a
+    /// *snapshot* of the clipped text rather than the whole string. Resizing
+    /// the panel happened to force the cell to refresh, which is why dragging
+    /// the window appeared to fix it while a track change did not.
+    ///
+    /// A CATextLayer renders the string into whatever bounds it is given, with
+    /// no cell and no cached layout, so the full string is always there.
+    private let container = CALayer()
+    private let first = CATextLayer()
+    private let second = CATextLayer()
 
     private var current: String = ""
+    private var currentFont: NSFont = .systemFont(ofSize: NSFont.systemFontSize)
     private var pause: TimeInterval = 2
     private var speed: CGFloat = 22
 
-    /// What the running animation was built for. The animation is only rebuilt
-    /// when one of these actually changes.
-    ///
-    /// This matters more than it looks. `updateNSView` runs on EVERY SwiftUI
-    /// update, and the panel re-renders about once a second from the clock. An
-    /// unconditional rebuild removed and re-added the animation each time, so
-    /// it never escaped its opening pause — the text sat still and clipped,
-    /// looking for all the world like the marquee was broken.
-    private var builtFor: (text: String, width: CGFloat, font: NSFont?)?
-
     /// Space between the end of one copy and the start of the next.
     private let gap: CGFloat = 44
+
+    /// What the running animation was built for, so it is rebuilt only when
+    /// something actually changes. `updateNSView` runs on every SwiftUI update
+    /// and the panel re-renders about once a second from the clock; rebuilding
+    /// each time meant the animation never escaped its opening pause.
+    private var builtFor: (text: String, width: CGFloat, font: NSFont)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.masksToBounds = true
-
-        for field in [label, trailing] {
-            field.isBezeled = false
-            field.drawsBackground = false
-            field.isEditable = false
-            field.isSelectable = false
-            field.lineBreakMode = .byClipping
-            field.cell?.usesSingleLineMode = true
+        layer?.addSublayer(container)
+        for text in [first, second] {
+            text.isWrapped = false
+            text.truncationMode = .none
+            text.alignmentMode = .left
+            container.addSublayer(text)
         }
-        track.wantsLayer = true
-        track.addSubview(label)
-        track.addSubview(trailing)
-        addSubview(track)
+        applyScale()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Without this the text is soft on a Retina display.
+    private func applyScale() {
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        for layer in [container, first, second] { layer.contentsScale = scale }
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        applyScale()
+        builtFor = nil
+        reflowIfNeeded()
+    }
+
     func apply(text: String, font: NSFont, colour: NSColor, pause: TimeInterval, speed: CGFloat) {
         self.pause = pause
         self.speed = speed
-
         current = text
-        for field in [label, trailing] {
-            field.stringValue = text
-            field.font = font
-            field.textColor = colour
+        currentFont = font
+
+        for layer in [first, second] {
+            layer.string = text
+            layer.font = font
+            layer.fontSize = font.pointSize
+            layer.foregroundColor = colour.cgColor
         }
         reflowIfNeeded()
     }
@@ -113,10 +129,13 @@ final class MarqueeView: NSView {
         reflowIfNeeded()
     }
 
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: ceil(currentFont.boundingRectForFont.height))
+    }
+
     /// Rebuilds only when the text, the font or the available width changed.
-    /// Leaving a running animation alone is the whole point.
     private func reflowIfNeeded() {
-        let signature = (text: current, width: bounds.width, font: label.font)
+        let signature = (text: current, width: bounds.width, font: currentFont)
         if let builtFor,
            builtFor.text == signature.text,
            abs(builtFor.width - signature.width) < 0.5,
@@ -129,69 +148,62 @@ final class MarqueeView: NSView {
     }
 
     /// Counts rebuilds across all instances, so "it restarts constantly" can be
-    /// distinguished from "it was logged once". The dedupe on `log` hides the
-    /// difference otherwise.
+    /// told apart from "it was logged once" — the log dedupes otherwise.
     nonisolated(unsafe) static var rebuilds = 0
 
-    override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: label.intrinsicContentSize.height)
-    }
-
     private func reflow() {
-        // Measured from the string and font directly, NOT from sizeToFit().
-        // sizeToFit can settle on whatever the field's current frame allows,
-        // which silently produced a truncated "full" width — so the marquee
-        // scrolled a string that had already lost its tail.
         let textWidth = measuredWidth()
         let available = bounds.width
-        let height = ceil(label.intrinsicContentSize.height)
-        let y = (bounds.height - height) / 2
+        let height = ceil(currentFont.boundingRectForFont.height)
+        let y = ((bounds.height - height) / 2).rounded()
 
-        track.layer?.removeAnimation(forKey: "marquee")
+        container.removeAnimation(forKey: "marquee")
+        // Layer frame changes animate implicitly by default, which would make
+        // every track change slide into place.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
 
-        // Fits: one copy, no animation, nothing running, nothing to pay for.
         guard available > 0, textWidth > available + 1 else {
-            trailing.isHidden = true
-            track.frame = NSRect(x: 0, y: y, width: max(textWidth, available), height: height)
-            label.frame = NSRect(x: 0, y: 0, width: textWidth, height: height)
-            if available > 0 { Self.log("[rebuild #\(Self.rebuilds)] fits (\(Int(textWidth))pt in \(Int(available))pt): static") }
+            second.isHidden = true
+            container.frame = CGRect(x: 0, y: y, width: max(textWidth, available), height: height)
+            first.frame = CGRect(x: 0, y: 0, width: max(textWidth, available), height: height)
+            if available > 0 {
+                Self.log("[rebuild #\(Self.rebuilds)] fits (\(Int(textWidth))pt in \(Int(available))pt): static")
+            }
             return
         }
 
-        // Overflowing: lay out both copies and wrap between them.
-        trailing.isHidden = false
+        second.isHidden = false
         let cycle = textWidth + gap
-        track.frame = NSRect(x: 0, y: y, width: cycle + textWidth, height: height)
-        label.frame = NSRect(x: 0, y: 0, width: textWidth, height: height)
-        trailing.frame = NSRect(x: cycle, y: 0, width: textWidth, height: height)
+        container.frame = CGRect(x: 0, y: y, width: cycle + textWidth, height: height)
+        first.frame = CGRect(x: 0, y: 0, width: textWidth, height: height)
+        second.frame = CGRect(x: cycle, y: 0, width: textWidth, height: height)
 
         let travel = TimeInterval(cycle / speed)
         let total = pause + travel
-        let startX = track.layer?.position.x ?? 0
+        let startX = container.position.x
 
-        // Hold at the start, then travel exactly one cycle. At the end of it
-        // the second copy sits precisely where the first began, so restarting
-        // is invisible — no reversal, no jump.
+        // Hold at the start, then travel exactly one cycle. At the end the
+        // second copy sits precisely where the first began, so the restart is
+        // invisible — no reversal, no jump.
         let animation = CAKeyframeAnimation(keyPath: "position.x")
         animation.values = [startX, startX, startX - cycle]
         animation.keyTimes = [0, NSNumber(value: pause / total), 1]
         animation.timingFunctions = [
             CAMediaTimingFunction(name: .linear),
-            // Eases away from rest, then holds a steady pace to the wrap.
             CAMediaTimingFunction(controlPoints: 0.35, 0, 1, 1),
         ]
         animation.duration = total
         animation.repeatCount = .infinity
-        track.layer?.add(animation, forKey: "marquee")
+        container.add(animation, forKey: "marquee")
 
-        Self.log("[rebuild #\(Self.rebuilds)] scrolling: text \(Int(textWidth))pt in \(Int(available))pt, cycle \(Int(cycle))pt over \(String(format: "%.1f", total))s — \(current)")
+        Self.log("[rebuild #\(Self.rebuilds)] scrolling \(Int(textWidth))pt in \(Int(available))pt — \(current)")
     }
 
     /// The full rendered width of the string, independent of any frame.
     private func measuredWidth() -> CGFloat {
-        guard let font = label.font else { return 0 }
-        let size = (current as NSString).size(withAttributes: [.font: font])
-        return ceil(size.width)
+        ceil((current as NSString).size(withAttributes: [.font: currentFont]).width)
     }
 
     /// Only logs when the state actually changes, so a resize does not spam.

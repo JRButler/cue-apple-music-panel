@@ -287,9 +287,22 @@ Interaction:
 
   Three traps, all of which made it look broken before it was:
 
-  - `NSTextField.sizeToFit()` can settle on a width its current frame allows, so
-    the "full" width was already truncated and the marquee scrolled a string
-    missing its tail. Measure the string against its font instead.
+  - **Do not use `NSTextField` for this.** It draws through a cell that caches
+    its layout from the previous frame, so a wider frame is not enough: it kept
+    rasterising the older, narrower layout and the marquee scrolled a *snapshot*
+    of the clipped text. The log said `measured 329pt, label frame 329pt` while
+    the screen showed a truncated string — the width was never wrong, the
+    drawing was. Resizing forced the cell to refresh, which is why dragging the
+    panel appeared to fix it while a track change did not.
+
+    `CATextLayer` renders the string into whatever bounds it is given, with no
+    cell in between. Two things it does not do for free: set `contentsScale`
+    from the backing scale factor, or text is soft on Retina; and wrap frame
+    changes in a `CATransaction` with actions disabled, or every track change
+    animates its layers into place.
+  - `sizeToFit()` can also settle on a width the current frame allows, so the
+    "full" width comes back already truncated. Measure the string against its
+    font instead.
   - `.frame(maxWidth: .infinity, alignment: .leading)` stretches the *frame* and
     aligns the child within it; it does not stretch the child. The marquee views
     needed it on themselves.
