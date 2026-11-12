@@ -46,10 +46,16 @@ final class StatusItemController: NSObject {
     ///
     /// Any SF Symbol name works; this macOS carries 8,647 of them. An unknown
     /// name falls back rather than leaving an empty menu bar.
-    /// `music.pages` — Julian's pick, with an echo of old iTunes. `music.note.tv`
-    /// was the other contender but reads as AirPlay or screen sharing, which
-    /// would collide with §4.7's actual AirPlay picker in M4.
-    static let defaultSymbol = "music.pages"
+    /// `playpause` — chosen in the menu bar itself, which is the only place
+    /// worth judging it.
+    ///
+    /// `music.pages` won on a rendered contact sheet and then failed in situ:
+    /// its internal detail survives black-on-white at 16 pt but disappears
+    /// against a real translucent menu bar. `music.note.tv` was the other
+    /// contender, but reads as AirPlay or screen sharing, which would collide
+    /// with §4.7's actual AirPlay picker in M4. A two-shape glyph with plenty
+    /// of open space is what holds up at this size.
+    static let defaultSymbol = "playpause"
 
     private static func menuBarImage() -> NSImage? {
         let name = UserDefaults.standard.string(forKey: "MenuBarSymbol") ?? defaultSymbol
