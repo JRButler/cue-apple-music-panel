@@ -92,8 +92,18 @@ enum PanelMetrics {
     /// §4.6 floors the volume track at 160 pt, which with its two speaker icons
     /// and gaps is 216 pt. The minimum width is whatever leaves room for that
     /// alongside the artwork and a title worth reading.
-    static let volumeZoneMinimum: CGFloat = 216
-    static let volumeZoneMaximum: CGFloat = 320
+    /// The volume zone is a FIXED width, not a range.
+    ///
+    /// Given a range it won the negotiation with the title every time and sat
+    /// at its maximum while the title was pinned to its 118 pt minimum — even
+    /// on a 589 pt panel, which made ordinary titles scroll needlessly. Fixing
+    /// it makes the split predictable: the volume gets a generous, constant
+    /// zone and every spare point goes to the title.
+    ///
+    /// 230 pt leaves roughly 190 pt of track, comfortably over §4.6's 160 pt
+    /// floor and never "icon-sized".
+    static let volumeZoneWidth: CGFloat = 230
+    static let volumeZoneMinimum: CGFloat = volumeZoneWidth
     static let titleMinimum: CGFloat = 118
 
     /// §4.5's favourite button, which shares the title's line.

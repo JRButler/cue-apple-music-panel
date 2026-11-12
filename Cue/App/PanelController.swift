@@ -30,7 +30,11 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// horizontally only.
     static var contentHeight: CGFloat { PanelMetrics.contentHeight }
 
-    private static var defaultSize: NSSize { NSSize(width: 640, height: contentHeight) }
+    /// Wide enough that ordinary titles do not scroll. At the 557 pt minimum
+    /// the title column is exactly its own 118 pt floor, so everything of any
+    /// length marches — which is what made the marquee look broken rather than
+    /// helpful.
+    private static var defaultSize: NSSize { NSSize(width: 760, height: contentHeight) }
     /// Wide enough that §4.6's volume control always fits beside the artwork
     /// and a readable title, so neither ever has to move or shrink.
     private static var minWidth: CGFloat { PanelMetrics.minimumWidth }

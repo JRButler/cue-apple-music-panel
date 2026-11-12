@@ -276,7 +276,28 @@ Interaction:
 - Cache artwork keyed by persistent ID, holding the last 20 tracks in an LRU. Fetch it on track change only, never on the 1 Hz poll.
 - Some streamed catalogue tracks return no artwork data. Show a neutral placeholder rather than an empty box. (If this happens often in M2 testing, a later option is fetching catalogue artwork via MusicKit; that's out of scope for now.)
 - Crossfade (150 ms) when the artwork changes.
-- Title, artist, and album, with each line truncating cleanly.
+- Title, artist, and album. Each line truncates cleanly when it fits the column
+  and **scrolls when it does not** — see `MarqueeText`.
+
+  The marquee is AppKit, not SwiftUI, and that is the whole point. Continuous
+  motion driven by SwiftUI costs 5–8% of a core (§7.4); one `CABasicAnimation`
+  on a layer runs on the render server and costs the main thread nothing.
+  Measured: **1.00–1.04%** with it scrolling, identical to the panel without it.
+  It installs no animation at all when the text fits, which is most of the time.
+
+  Three traps, all of which made it look broken before it was:
+
+  - `NSTextField.sizeToFit()` can settle on a width its current frame allows, so
+    the "full" width was already truncated and the marquee scrolled a string
+    missing its tail. Measure the string against its font instead.
+  - `.frame(maxWidth: .infinity, alignment: .leading)` stretches the *frame* and
+    aligns the child within it; it does not stretch the child. The marquee views
+    needed it on themselves.
+  - Most importantly, the panel had been sitting at its **minimum width**, where
+    the title column is exactly its own 118 pt floor and therefore everything
+    scrolls. The default width is now 760 pt, at which a 273 pt title simply
+    fits. A marquee that is always running is usually a layout problem, not a
+    marquee problem.
 - Clicking the artwork brings Music.app forward (`activate`).
 
 ### 4.4 Transport ✅ confirmed

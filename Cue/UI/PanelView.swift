@@ -121,6 +121,9 @@ struct PanelView: View {
                 HStack(alignment: .top, spacing: 12) {
                     NowPlayingLines(track: model.track, onActivate: { model.activateMusic() })
                         .frame(minWidth: PanelMetrics.titleMinimum, maxWidth: .infinity, alignment: .leading)
+                        // The title takes the spare width; the volume has a
+                        // generous minimum already and does not need the rest.
+                        .layoutPriority(1)
 
                     // §4.5's favourite belongs with the track's information
                     // rather than in the transport row: it describes the song,
@@ -135,10 +138,7 @@ struct PanelView: View {
                     // Always on the title's line. The minimum width guarantees
                     // room for it, so it never has to move.
                     volumeControl
-                        .frame(
-                            minWidth: PanelMetrics.volumeZoneMinimum,
-                            maxWidth: PanelMetrics.volumeZoneMaximum
-                        )
+                        .frame(width: PanelMetrics.volumeZoneWidth)
                 }
 
                 // Transport sits directly above the scrub bar, centred, and
@@ -200,6 +200,7 @@ struct PanelView: View {
             .notice("\(message, privacy: .public)")
     }
 
+
     nonisolated(unsafe) private static var lastArtworkFrame: CGRect = .zero
 
     static func reportArtworkFrame(_ rect: CGRect) {
@@ -258,17 +259,28 @@ private struct NowPlayingLines: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(track?.name ?? "Nothing playing")
-                .font(.system(.body, design: .rounded).weight(.semibold))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .foregroundStyle(track == nil ? .secondary : .primary)
+            // Scrolls only when it does not fit; see MarqueeText for why this
+            // is AppKit rather than SwiftUI.
+            // `maxWidth: .infinity` has to be on the marquee views themselves.
+            // Putting it only on the enclosing frame stretches the frame and
+            // left-aligns the child inside it — the child keeps its own narrow
+            // ideal width, which pinned the scrolling window to 118 pt however
+            // wide the panel got.
+            MarqueeText(
+                text: track?.name ?? "Nothing playing",
+                font: .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
+                colour: track == nil ? .secondaryLabelColor : .labelColor
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: 18)
 
-            Text(subtitle)
-                .font(.caption)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .foregroundStyle(.secondary)
+            MarqueeText(
+                text: subtitle,
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                colour: .secondaryLabelColor
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: 14)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
