@@ -127,13 +127,29 @@ struct PanelView: View {
 
                 // Transport sits directly above the scrub bar, centred, and
                 // takes the slack the artwork row used to occupy.
-                TransportControls(
-                    isPlaying: model.playerState.isAdvancing,
-                    isEnabled: model.connection == .connected,
-                    onPrevious: { Task { await model.previousTrack() } },
-                    onPlayPause: { Task { await model.togglePlayPause() } },
-                    onNext: { Task { await model.nextTrack() } }
-                )
+                // §4.6a: shuffle and repeat flank the centred transport group.
+                HStack(spacing: 4) {
+                    Spacer(minLength: 0)
+                    ShuffleButton(
+                        isOn: model.isShuffling,
+                        isEnabled: model.connection == .connected,
+                        action: { Task { await model.toggleShuffle() } }
+                    )
+                    TransportControls(
+                        isPlaying: model.playerState.isAdvancing,
+                        isEnabled: model.connection == .connected,
+                        onPrevious: { Task { await model.previousTrack() } },
+                        onPlayPause: { Task { await model.togglePlayPause() } },
+                        onNext: { Task { await model.nextTrack() } }
+                    )
+                    .fixedSize()
+                    RepeatButton(
+                        mode: model.repeatMode,
+                        isEnabled: model.connection == .connected,
+                        action: { Task { await model.cycleRepeat() } }
+                    )
+                    Spacer(minLength: 0)
+                }
 
                 scrubBar
             }

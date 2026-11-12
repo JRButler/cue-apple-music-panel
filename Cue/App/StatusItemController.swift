@@ -24,7 +24,7 @@ final class StatusItemController: NSObject {
         super.init()
 
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "music.note.list", accessibilityDescription: "Cue")
+            button.image = Self.menuBarImage()
             button.image?.isTemplate = true
         }
 
@@ -36,6 +36,25 @@ final class StatusItemController: NSObject {
             item.target = self
         }
         statusItem.menu = menu
+    }
+
+    /// The menu-bar glyph, overridable without a rebuild so candidates can be
+    /// compared in place rather than imagined:
+    ///
+    ///     defaults write nz.slstudio.Cue MenuBarSymbol waveform
+    ///     defaults delete nz.slstudio.Cue MenuBarSymbol     # back to the default
+    ///
+    /// Any SF Symbol name works; this macOS carries 8,647 of them. An unknown
+    /// name falls back rather than leaving an empty menu bar.
+    /// `music.pages` — Julian's pick, with an echo of old iTunes. `music.note.tv`
+    /// was the other contender but reads as AirPlay or screen sharing, which
+    /// would collide with §4.7's actual AirPlay picker in M4.
+    static let defaultSymbol = "music.pages"
+
+    private static func menuBarImage() -> NSImage? {
+        let name = UserDefaults.standard.string(forKey: "MenuBarSymbol") ?? defaultSymbol
+        return NSImage(systemSymbolName: name, accessibilityDescription: "Cue")
+            ?? NSImage(systemSymbolName: defaultSymbol, accessibilityDescription: "Cue")
     }
 
     @objc private func showWindow() { togglePanel() }

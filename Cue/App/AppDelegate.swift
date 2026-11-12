@@ -93,6 +93,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             exit(probe.exitCode)
         }
 
+        if options.isM3Probe {
+            Task {
+                let probe = M0Probe(controller: controller, options: options)
+                await probe.runM3WriteProbe()
+                exit(probe.exitCode)
+            }
+            return
+        }
+
         if options.isVolumeLatency {
             Task {
                 let probe = M0Probe(controller: controller, options: options)
@@ -159,6 +168,8 @@ struct LaunchOptions: Sendable {
     var isMuteProbe = false
     /// Times how long the panel takes to notice an external volume change.
     var isVolumeLatency = false
+    /// Checks whether §4.5's three properties accept writes.
+    var isM3Probe = false
     /// Seconds to keep listening for `playerInfo` after the probe's fixed
     /// sequence, so a track change can be caught and timed.
     var listenSeconds: Int = 0
@@ -166,7 +177,7 @@ struct LaunchOptions: Sendable {
 
     /// True for any mode that should not build a panel.
     var isDiagnostic: Bool {
-        isProbe || isGrant || isDeny || isBench || isWatch || isDumpRecords || isTestClock || isMuteProbe || isVolumeLatency
+        isProbe || isGrant || isDeny || isBench || isWatch || isDumpRecords || isTestClock || isMuteProbe || isVolumeLatency || isM3Probe
     }
 
     init(arguments: [String]) {
@@ -191,6 +202,8 @@ struct LaunchOptions: Sendable {
                 isMuteProbe = true
             case "--volume-latency":
                 isVolumeLatency = true
+            case "--probe-m3":
+                isM3Probe = true
             case "--listen":
                 if let value = iterator.next(), let seconds = Int(value) { listenSeconds = seconds }
             case "--samples":

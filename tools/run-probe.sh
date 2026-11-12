@@ -38,7 +38,7 @@ echo
 
 # -n forces a fresh instance, -W waits for it to exit.
 # --grant is its own mode; everything else runs the probe sequence.
-if [[ " $* " == *" --grant "* || " $* " == *" --bench "* || " $* " == *" --watch "* || " $* " == *" --dump-records "* || " $* " == *" --test-clock "* || " $* " == *" --probe-mute "* || " $* " == *" --volume-latency "* ]]; then
+if [[ " $* " == *" --grant "* || " $* " == *" --bench "* || " $* " == *" --watch "* || " $* " == *" --dump-records "* || " $* " == *" --test-clock "* || " $* " == *" --probe-mute "* || " $* " == *" --volume-latency "* || " $* " == *" --probe-m3 "* ]]; then
   open -n -W -a "$APP" --args "$@"
 else
   open -n -W -a "$APP" --args --probe "$@"

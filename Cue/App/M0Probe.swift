@@ -511,6 +511,102 @@ final class M0Probe {
         return formatter
     }()
 
+    /// §4.5's three writes, probed before anything is built on them.
+    ///
+    /// Music's dictionary marks `mute` read-write and then refuses it with
+    /// error 9038, so a settable-looking property proves nothing. Each of these
+    /// is written to its CURRENT value first — a no-op that still exercises the
+    /// write path — and then genuinely toggled and restored.
+    func runM3WriteProbe() async {
+        heading("§4.5 — are shuffle, repeat and favorited writable?")
+
+        guard controller.bridge.isMusicRunning else {
+            fail("Music is not running")
+            printVerdict()
+            return
+        }
+
+        let attempts: [(String, String)] = [
+            ("read shuffle enabled", """
+            tell application id "com.apple.Music" to return shuffle enabled
+            """),
+            ("set shuffle enabled to its own value", """
+            tell application id "com.apple.Music"
+                set s to shuffle enabled
+                set shuffle enabled to s
+                return shuffle enabled
+            end tell
+            """),
+            ("toggle shuffle, pause, read back", """
+            tell application id "com.apple.Music"
+                set s to shuffle enabled
+                set shuffle enabled to (not s)
+            end tell
+            delay 0.6
+            tell application id "com.apple.Music"
+                set r to shuffle enabled
+                set shuffle enabled to s
+                return (r as text)
+            end tell
+            """),
+            ("shuffle with a playlist context", """
+            tell application id "com.apple.Music"
+                set ctx to "none"
+                try
+                    set ctx to (name of current playlist)
+                end try
+                return ("current playlist: " & ctx)
+            end tell
+            """),
+            ("read song repeat", """
+            tell application id "com.apple.Music" to return (song repeat as text)
+            """),
+            ("set song repeat, pause, read back", """
+            tell application id "com.apple.Music"
+                set r to song repeat
+                set song repeat to all
+            end tell
+            delay 0.6
+            tell application id "com.apple.Music"
+                set got to (song repeat as text)
+                set song repeat to r
+                return got
+            end tell
+            """),
+            ("read favorited of current track", """
+            tell application id "com.apple.Music" to return (favorited of current track)
+            """),
+            ("toggle favorited and restore", """
+            tell application id "com.apple.Music"
+                tell current track
+                    set f to favorited
+                    set favorited to (not f)
+                    set got to (favorited as text)
+                    set favorited to f
+                end tell
+                return got
+            end tell
+            """),
+            ("read disliked of current track", """
+            tell application id "com.apple.Music" to return (disliked of current track)
+            """),
+        ]
+
+        for (label, source) in attempts {
+            do {
+                let descriptor = try controller.bridge.rawDescriptor(source: source)
+                let rendered = descriptor.stringValue
+                    ?? (descriptor.descriptorType == typeBoolean ? "\(descriptor.booleanValue)" : "\(descriptor.int32Value)")
+                pass("\(label) → \(rendered)")
+            } catch {
+                fail("\(label) → \((error as? MusicBridgeError)?.localizedDescription ?? "\(error)")")
+            }
+        }
+
+        note("anything that fails here needs the same treatment mute got (§6.3)")
+        printVerdict()
+    }
+
     // MARK: - Checks
 
     /// Verifies every row of §3.1's error table without provoking each condition.

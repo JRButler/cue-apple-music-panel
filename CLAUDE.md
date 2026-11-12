@@ -290,6 +290,14 @@ Interaction:
   **`favorited`** (code `pLov`, boolean, on `track`), confirmed in M0 — see §6.1.
   There is also `disliked` (`pHat`), plus `album favorited` / `album disliked`.
 
+**All three writes are asynchronous.** Music applies them a moment after the
+event returns, so reading the property back in the same script yields the OLD
+value. An early M3 probe did exactly that and the writes looked like they were
+being silently ignored; with a 0.6 s pause they all took effect. Update the UI
+optimistically and let the 0.9 s tick reconcile — never confirm one of these
+writes with an immediate read, or every button appears to flip back the instant
+it is clicked.
+
 ### 4.6 Volume ✅ confirmed
 - A horizontal slider bound to Music's `sound volume` (0–100). This is Music's own level, not system volume.
 - **Decent width:** at least 160 pt in the compact layout. It grows with the panel and never shrinks to an icon-sized control. The interactive height is at least 20 pt, the same as the scrub bar.
@@ -807,6 +815,26 @@ logging is what tells you when something stopped.
 
 ### M3 — Shuffle, repeat, favourite
 - Implement §4.5.
+
+#### 6.5 M3 findings
+
+`shuffle enabled`, `song repeat` and `favorited` are all writable, checked with
+`tools/run-probe.sh --probe-m3` before anything was built on them — `mute` looked
+settable in the dictionary too and refuses with 9038 (§6.3), so the dictionary
+is not evidence.
+
+**The writes are applied asynchronously**, which the probe nearly got wrong.
+Setting a property and reading it back in the same script returns the previous
+value, so the first run reported shuffle and repeat as silently ignored. A 0.6 s
+pause showed all three working. §4.5 records the consequence: optimistic updates
+only, reconciled by the tick.
+
+Placement: shuffle and repeat flank the transport group per §4.6a. Favourite sits
+beside the title instead, because it describes the track rather than the
+playback, and the transport row was already five controls wide. Both toggles tint
+when active — a plain glyph gives no way to read shuffle-on from shuffle-off —
+and `repeat one` gets the distinct `repeat.1` glyph rather than a badge, which
+would be illegible at 13 pt.
 
 ### M4 — AirPlay
 - Implement §4.7.

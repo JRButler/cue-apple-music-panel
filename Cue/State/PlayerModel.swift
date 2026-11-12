@@ -603,6 +603,51 @@ final class PlayerModel {
 
     // MARK: - Commands
 
+    // MARK: - §4.5 shuffle, repeat, favourite
+    //
+    // All three update optimistically and are NOT read back to confirm. Music
+    // applies these writes asynchronously — a read in the same breath returns
+    // the old value, which would make every button flip back the instant it
+    // was clicked. The 0.9 s tick reconciles them, and reverts on a throw.
+
+    func toggleShuffle() async {
+        let target = !isShuffling
+        isShuffling = target
+        do {
+            try await bridge.setShuffle(target)
+        } catch {
+            isShuffling = !target
+            logFailure(error, "setShuffle")
+        }
+    }
+
+    /// §4.5 cycles off → all → one.
+    func cycleRepeat() async {
+        let target = repeatMode.next
+        let previous = repeatMode
+        repeatMode = target
+        do {
+            try await bridge.setRepeat(target)
+        } catch {
+            repeatMode = previous
+            logFailure(error, "setRepeat")
+        }
+    }
+
+    func toggleFavourite() async {
+        guard var current = track else { return }
+        let target = !current.isFavourite
+        current.isFavourite = target
+        track = current
+        do {
+            try await bridge.setFavourite(target)
+        } catch {
+            current.isFavourite = !target
+            track = current
+            logFailure(error, "setFavourite")
+        }
+    }
+
     // MARK: - Transport (§4.4)
 
     /// §4.4: the icon updates optimistically and reconciles on the next sync, so

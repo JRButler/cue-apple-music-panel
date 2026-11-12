@@ -305,6 +305,20 @@ final class MusicBridge {
         _ = try run(.setMute, arguments: [NSAppleEventDescriptor(boolean: muted)])
     }
 
+    // MARK: - §4.5
+
+    func setShuffle(_ enabled: Bool) async throws {
+        _ = try run(.setShuffle, arguments: [NSAppleEventDescriptor(boolean: enabled)])
+    }
+
+    func setRepeat(_ mode: RepeatMode) async throws {
+        _ = try run(.setRepeat, arguments: [NSAppleEventDescriptor(string: mode.rawValue)])
+    }
+
+    func setFavourite(_ favourite: Bool) async throws {
+        _ = try run(.setFavourite, arguments: [NSAppleEventDescriptor(boolean: favourite)])
+    }
+
     // MARK: - M0 diagnostics
 
     /// Answers §4.5's open question against the running app.

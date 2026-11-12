@@ -38,6 +38,10 @@ enum MusicScript: String, CaseIterable, Sendable {
     /// §4.6, both argument-taking.
     case setVolume
     case setMute
+    /// §4.5, all argument-taking.
+    case setShuffle
+    case setRepeat
+    case setFavourite
     /// M0 only: confirms the favourite property name at runtime.
     case probeFavourite
 
@@ -48,6 +52,9 @@ enum MusicScript: String, CaseIterable, Sendable {
         case .seek: "seekto"
         case .setVolume: "setvolume"
         case .setMute: "setmute"
+        case .setShuffle: "setshuffle"
+        case .setRepeat: "setrepeat"
+        case .setFavourite: "setfavourite"
         default: nil
         }
     }
@@ -63,6 +70,9 @@ enum MusicScript: String, CaseIterable, Sendable {
         case .fetchArtwork: Self.fetchArtworkSource
         case .setVolume: Self.setVolumeSource
         case .setMute: Self.setMuteSource
+        case .setShuffle: Self.setShuffleSource
+        case .setRepeat: Self.setRepeatSource
+        case .setFavourite: Self.setFavouriteSource
         case .probeFavourite: Self.probeFavouriteSource
         }
     }
@@ -207,6 +217,47 @@ extension MusicScript {
             tell application id "com.apple.Music" to set mute to m
         end timeout
     end setmute
+    """
+
+    /// §4.5's shuffle.
+    ///
+    /// Music applies these writes asynchronously: reading the property back in
+    /// the same script returns the OLD value, which made an early probe look
+    /// like the write had silently failed. Do not verify a write by reading it
+    /// immediately — update optimistically and let the next tick confirm.
+    static let setShuffleSource = """
+    on setshuffle(enabled)
+        with timeout of 5 seconds
+            tell application id "com.apple.Music" to set shuffle enabled to enabled
+        end timeout
+    end setshuffle
+    """
+
+    /// §4.5's repeat. The `eRpt` values are enum constants, not strings, so the
+    /// mode arrives as text and is mapped here.
+    static let setRepeatSource = """
+    on setrepeat(mode)
+        with timeout of 5 seconds
+            tell application id "com.apple.Music"
+                if mode is "one" then
+                    set song repeat to one
+                else if mode is "all" then
+                    set song repeat to all
+                else
+                    set song repeat to off
+                end if
+            end tell
+        end timeout
+    end setrepeat
+    """
+
+    /// §4.5's favourite — `favorited`, confirmed writable in M3.
+    static let setFavouriteSource = """
+    on setfavourite(flag)
+        with timeout of 5 seconds
+            tell application id "com.apple.Music" to set favorited of current track to flag
+        end timeout
+    end setfavourite
     """
 
     /// M0's open question from §4.5: is the property `favorited` or the older `loved`?
