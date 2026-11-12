@@ -778,6 +778,33 @@ AppleScript record supplies a hex string — and the dedupe guard was keyed on
 `id`. Artwork now keys on `TrackInfo.artworkKey`, the composite, which both
 paths always produce identically.
 
+**A second fault surfaced the moment the first was fixed.** With the panel
+recovering properly, Music relaunched and the artwork stayed a placeholder.
+One log line settled it:
+
+```
+artwork fetched in 9.8 ms (4 bytes)
+```
+
+Music answered with a 4-byte payload instead of an image, presumably still
+warming up. The code saw non-empty data, failed to decode it, and cached that
+nil as a known negative — so the track was never asked again. Negative caching
+is deliberate (§4.3: a track genuinely without artwork should not be re-fetched
+every time), but it must distinguish three outcomes, not two:
+
+| outcome | meaning | cache? |
+|---|---|---|
+| no data returned | the track genuinely has none | **yes** |
+| data that will not decode | a bad reply | no — clear the key, retry |
+| a thrown error | transient: busy, stale, timed out | no — clear the key, retry |
+
+The bridge also now discards implausibly small replies rather than passing them
+on. Both faults in §6.4 were found from the log alone, and the first one had
+left no trace at all until transition logging was added — the panel sat wrong
+for hours while the log showed a perfectly healthy session. **Log state
+transitions, not just activity.** Activity logging says what worked; transition
+logging is what tells you when something stopped.
+
 ### M3 — Shuffle, repeat, favourite
 - Implement §4.5.
 
