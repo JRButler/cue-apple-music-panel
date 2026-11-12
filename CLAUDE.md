@@ -330,6 +330,14 @@ Interaction:
 ### 4.4 Transport ✅ confirmed
 - Layout: **previous · play/pause · next** as a centred group, with play/pause visibly larger than the buttons either side.
 - Hit targets: at least 32 pt for previous and next, and at least 44 pt for play/pause.
+  **The target and the glyph are separate budgets.** §4.4 governs the target —
+  the frame plus its `contentShape` — and says nothing about the symbol drawn
+  inside it. The first build left a 21 pt play glyph floating in its 46 pt
+  target, which read as timid. The glyphs were enlarged substantially (play 27,
+  prev/next 19, shuffle/repeat 18, star 15, volume speakers 13, scrub times 13)
+  with the targets untouched, so the row height and the panel height did not
+  change at all. Check the volume track stays over §4.6's 160 pt floor when
+  touching the speaker icon frames; it is 170 pt.
 - Commands: `previous track` / `playpause` / `next track` — **except from a
   parked player**. `playpause` toggles *the current track*, so with nothing
   queued it has nothing to toggle and does nothing at all; Cue's play button

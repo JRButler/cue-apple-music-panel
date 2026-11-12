@@ -10,6 +10,12 @@
 //  smaller than that — the target is the frame plus `contentShape`, not the
 //  drawn symbol.
 //
+//  §4.4 mandates the targets and says nothing about the glyph inside them,
+//  which left a lot of unused room: a 21 pt play symbol floating in a 46 pt
+//  target. The glyphs below are drawn much larger while the targets are
+//  untouched, so the row height — and therefore the panel height — is
+//  unchanged.
+//
 
 import SwiftUI
 
@@ -29,7 +35,7 @@ struct TransportControls: View {
         HStack(spacing: 6) {
             TransportButton(
                 symbol: "backward.fill",
-                glyphSize: 14,
+                glyphSize: 19,
                 target: sideTarget,
                 help: "Previous",
                 action: onPrevious
@@ -39,7 +45,7 @@ struct TransportControls: View {
                 // §4.4: reflects the actual player state, updated optimistically
                 // on click and reconciled on the next sync.
                 symbol: isPlaying ? "pause.fill" : "play.fill",
-                glyphSize: 21,
+                glyphSize: 27,
                 target: centreTarget,
                 help: isPlaying ? "Pause" : "Play",
                 action: onPlayPause
@@ -47,7 +53,7 @@ struct TransportControls: View {
 
             TransportButton(
                 symbol: "forward.fill",
-                glyphSize: 14,
+                glyphSize: 19,
                 target: sideTarget,
                 help: "Next",
                 action: onNext

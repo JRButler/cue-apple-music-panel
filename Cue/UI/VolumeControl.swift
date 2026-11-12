@@ -45,9 +45,9 @@ struct VolumeControl: View {
             // §4.6: the low icon toggles mute.
             Button(action: onToggleMute) {
                 Image(systemName: isMuted ? "speaker.slash.fill" : "speaker.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: 13))
                     .foregroundStyle(isMuted ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                    .frame(width: 20, height: interactiveHeight)
+                    .frame(width: 22, height: interactiveHeight)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -58,9 +58,9 @@ struct VolumeControl: View {
                 .frame(height: interactiveHeight)
 
             Image(systemName: "speaker.wave.3.fill")
-                .font(.system(size: 10))
+                .font(.system(size: 13))
                 .foregroundStyle(.secondary)
-                .frame(width: 20, height: interactiveHeight)
+                .frame(width: 22, height: interactiveHeight)
         }
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.4)

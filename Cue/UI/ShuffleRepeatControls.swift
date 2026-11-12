@@ -72,11 +72,13 @@ private struct StateGlyph: View {
                 Circle()
                     .fill(isHovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
                 Image(systemName: symbol)
-                    // 16 pt, not 12. At 12 the numeral inside `repeat.1` is
-                    // invisible, so repeat-one and repeat-all were impossible to
-                    // tell apart and the control read as unresponsive rather
-                    // than three-state. Legible from about 16.
-                    .font(.system(size: 16, weight: .medium))
+                    // 18 pt. At 12 the numeral inside `repeat.1` was invisible,
+                    // so repeat-one and repeat-all could not be told apart and
+                    // the control read as unresponsive rather than three-state;
+                    // 16 was the point it became legible, and 18 sits better
+                    // beside the enlarged transport glyphs. Still well inside
+                    // the 30 pt target, so the row does not grow.
+                    .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
             }
             .frame(width: target, height: target)
@@ -103,7 +105,7 @@ struct FavouriteButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: isFavourite ? "star.fill" : "star")
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(isFavourite ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                 .frame(width: 24, height: 24)
                 .background(
