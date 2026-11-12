@@ -173,7 +173,7 @@ final class MusicBridge {
         return Self.appState(
             from: appRecord,
             position: rawPosition,
-            track: trackRecord.map(Self.track(from:))
+            track: trackRecord.flatMap(Self.track(from:))
         )
     }
 
@@ -205,12 +205,27 @@ final class MusicBridge {
     // trap, because a field Music stops sending should degrade one value, not
     // take down the whole sync.
 
-    private static func track(from record: NSAppleEventDescriptor) -> TrackInfo {
+    /// Returns nil when the record is present but hollow.
+    ///
+    /// After the last track of an album finishes, Music keeps answering
+    /// `current track` with a record whose every field is empty rather than
+    /// erroring. Building a TrackInfo from it gave the panel a track with no
+    /// title, no artwork and no duration — which rendered as a blank panel with
+    /// an indeterminate scrub bar instead of §5's "nothing queued" state.
+    private static func track(from record: NSAppleEventDescriptor) -> TrackInfo? {
         let duration = number(record, TrackKey.duration) ?? -1
+        let name = text(record, TrackKey.name) ?? ""
+        let persistentID = text(record, TrackKey.persistentID) ?? ""
+        let artist = text(record, TrackKey.artist) ?? ""
+
+        if name.isEmpty, persistentID.isEmpty, artist.isEmpty, duration <= 0 {
+            return nil
+        }
+
         return TrackInfo(
-            persistentID: text(record, TrackKey.persistentID) ?? "",
-            name: text(record, TrackKey.name) ?? "",
-            artist: text(record, TrackKey.artist) ?? "",
+            persistentID: persistentID,
+            name: name,
+            artist: artist,
             album: text(record, TrackKey.album) ?? "",
             duration: duration > 0 ? duration : 0,
             isFavourite: flag(record, TrackKey.favorited) ?? false

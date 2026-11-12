@@ -308,19 +308,30 @@ private struct IndeterminateBar: View {
     var body: some View {
         GeometryReader { geometry in
             Capsule()
-                .fill(.tint.opacity(0.65))
-                .frame(width: geometry.size.width * 0.3, height: height)
-                .offset(x: geometry.size.width * phase)
+                .fill(.tint.opacity(isAnimating ? 0.65 : 0.3))
+                .frame(width: geometry.size.width * (isAnimating ? 0.3 : 1), height: height)
+                .offset(x: isAnimating ? geometry.size.width * phase : 0)
         }
         .frame(height: height)
         .clipShape(Capsule())
-        .onAppear { if isAnimating { animate() } }
-        .onChange(of: isAnimating) { _, animating in if animating { animate() } }
+        .onAppear { if isAnimating { start() } }
+        .onChange(of: isAnimating) { _, animating in animating ? start() : stop() }
     }
 
-    private func animate() {
+    private func start() {
+        phase = -0.4
         withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: false)) {
             phase = 1.1
+        }
+    }
+
+    /// A `repeatForever` animation does not end on its own. Without explicitly
+    /// replacing it with a zero-duration change, the bar carried on sliding
+    /// after playback stopped — which looked exactly like the panel was still
+    /// seeking through a track that had finished.
+    private func stop() {
+        withAnimation(.linear(duration: 0)) {
+            phase = -0.4
         }
     }
 }

@@ -836,6 +836,31 @@ when active — a plain glyph gives no way to read shuffle-on from shuffle-off �
 and `repeat one` gets the distinct `repeat.1` glyph rather than a badge, which
 would be illegible at 13 pt.
 
+**Four faults found in the first session of real use**, all from the log:
+
+1. **`setShuffle` failed with -10006, "Can't set shuffle enabled to enabled".**
+   The handler was `on setshuffle(enabled)`, and `enabled` is a Music term
+   (`enbl`, on `track`) — inside a `tell` block the terminology wins over a
+   local variable, so AppleScript bound the property instead of the argument.
+   Every handler parameter is now prefixed `cue`, which no dictionary uses.
+2. **The probe passed while the app was broken**, because it drove Music with
+   literal values rather than through the handlers. `--probe-m3` now exercises
+   the real `MusicBridge` methods as well, and treats "returned cleanly but
+   changed nothing" as a failure — which is exactly how a terminology collision
+   presents.
+3. **A blank panel after an album finished.** Music keeps answering
+   `current track` with a record whose fields are all empty rather than
+   erroring, and a TrackInfo built from it gave the panel a track with no
+   title, artwork or duration. A hollow record now reads as nothing queued,
+   which is §5's state.
+4. **The indeterminate scrub bar never stopped.** A `repeatForever` animation
+   does not end on its own; it kept sliding after playback finished, looking
+   like the panel was still seeking a track that had ended.
+
+**The lesson worth keeping is (2).** A probe that does not exercise the code
+path the app uses can report health while the app is broken. Prefer driving the
+real method over reproducing what it does.
+
 ### M4 — AirPlay
 - Implement §4.7.
 

@@ -12,6 +12,13 @@
 //  Property and enumeration names below were taken from the macOS 27.0.1
 //  scripting definition (`sdef /System/Applications/Music.app`).
 //
+//  EVERY handler parameter is prefixed `cue`. This is not style: inside a
+//  `tell application` block, Music's terminology wins over a local variable of
+//  the same name. `on setshuffle(enabled)` compiled cleanly and then failed at
+//  runtime with "Can't set shuffle enabled to enabled" — `enabled` is a track
+//  property (`enbl`), so AppleScript bound the term rather than the argument.
+//  A prefix no dictionary uses makes the collision impossible.
+//
 //  EVERY script sets an explicit `with timeout`. This is not belt-and-braces.
 //  The Apple Event default is two minutes, and NSAppleScript blocks the thread
 //  it runs on — which per §3.1 is always the main thread. One stalled event,
@@ -163,9 +170,9 @@ extension MusicScript {
     /// Compiling once and passing the position as an argument avoids recompiling a
     /// script per seek, which would defeat §3.1's compile-once rule.
     static let seekSource = """
-    on seekto(p)
+    on seekto(cueSeconds)
         with timeout of 5 seconds
-            tell application id "com.apple.Music" to set player position to p
+            tell application id "com.apple.Music" to set player position to cueSeconds
         end timeout
     end seekto
     """
@@ -199,12 +206,12 @@ extension MusicScript {
     /// out-of-range value rather than complaining, which would look like the
     /// slider having no effect.
     static let setVolumeSource = """
-    on setvolume(v)
+    on setvolume(cueLevel)
         with timeout of 5 seconds
             tell application id "com.apple.Music"
-                if v < 0 then set v to 0
-                if v > 100 then set v to 100
-                set sound volume to (v as integer)
+                if cueLevel < 0 then set cueLevel to 0
+                if cueLevel > 100 then set cueLevel to 100
+                set sound volume to (cueLevel as integer)
             end tell
         end timeout
     end setvolume
@@ -212,9 +219,9 @@ extension MusicScript {
 
     /// §4.6's mute, which is Music's own `mute` rather than system audio.
     static let setMuteSource = """
-    on setmute(m)
+    on setmute(cueFlag)
         with timeout of 5 seconds
-            tell application id "com.apple.Music" to set mute to m
+            tell application id "com.apple.Music" to set mute to cueFlag
         end timeout
     end setmute
     """
@@ -226,9 +233,9 @@ extension MusicScript {
     /// like the write had silently failed. Do not verify a write by reading it
     /// immediately — update optimistically and let the next tick confirm.
     static let setShuffleSource = """
-    on setshuffle(enabled)
+    on setshuffle(cueFlag)
         with timeout of 5 seconds
-            tell application id "com.apple.Music" to set shuffle enabled to enabled
+            tell application id "com.apple.Music" to set shuffle enabled to cueFlag
         end timeout
     end setshuffle
     """
@@ -236,12 +243,12 @@ extension MusicScript {
     /// §4.5's repeat. The `eRpt` values are enum constants, not strings, so the
     /// mode arrives as text and is mapped here.
     static let setRepeatSource = """
-    on setrepeat(mode)
+    on setrepeat(cueMode)
         with timeout of 5 seconds
             tell application id "com.apple.Music"
-                if mode is "one" then
+                if cueMode is "one" then
                     set song repeat to one
-                else if mode is "all" then
+                else if cueMode is "all" then
                     set song repeat to all
                 else
                     set song repeat to off
@@ -253,9 +260,9 @@ extension MusicScript {
 
     /// §4.5's favourite — `favorited`, confirmed writable in M3.
     static let setFavouriteSource = """
-    on setfavourite(flag)
+    on setfavourite(cueFlag)
         with timeout of 5 seconds
-            tell application id "com.apple.Music" to set favorited of current track to flag
+            tell application id "com.apple.Music" to set favorited of current track to cueFlag
         end timeout
     end setfavourite
     """

@@ -604,7 +604,60 @@ final class M0Probe {
         }
 
         note("anything that fails here needs the same treatment mute got (§6.3)")
+
+        // The checks above drive Music with literal values. That is NOT what
+        // the app does, and the difference hid a real bug: `on setshuffle(enabled)`
+        // compiled and then failed at runtime because `enabled` is a Music term,
+        // so AppleScript bound the property rather than the argument. The probe
+        // passed while the app was broken. Everything below goes through the
+        // same bridge methods the panel calls.
+        heading("§4.5 — through the bridge, as the app calls it")
+
+        await exerciseBridgeWrite("setShuffle") {
+            let before = try await self.controller.bridge.fetchAppState().isShuffling
+            try await self.controller.bridge.setShuffle(!before)
+            try? await Task.sleep(for: .milliseconds(700))
+            let after = try await self.controller.bridge.fetchAppState().isShuffling
+            try await self.controller.bridge.setShuffle(before)
+            return after != before ? "toggled \(before) -> \(after)" : "NO EFFECT (still \(after))"
+        }
+
+        await exerciseBridgeWrite("setRepeat") {
+            let before = try await self.controller.bridge.fetchAppState().repeatMode
+            let target: RepeatMode = before == .all ? .one : .all
+            try await self.controller.bridge.setRepeat(target)
+            try? await Task.sleep(for: .milliseconds(700))
+            let after = try await self.controller.bridge.fetchAppState().repeatMode
+            try await self.controller.bridge.setRepeat(before)
+            return after == target ? "set to \(after.rawValue)" : "NO EFFECT (wanted \(target.rawValue), got \(after.rawValue))"
+        }
+
+        if controller.lastState?.track != nil {
+            await exerciseBridgeWrite("setFavourite") {
+                let before = try await self.controller.bridge.fetchState().track?.isFavourite ?? false
+                try await self.controller.bridge.setFavourite(!before)
+                try? await Task.sleep(for: .milliseconds(700))
+                let after = try await self.controller.bridge.fetchState().track?.isFavourite ?? false
+                try await self.controller.bridge.setFavourite(before)
+                return after != before ? "toggled \(before) -> \(after)" : "NO EFFECT (still \(after))"
+            }
+        } else {
+            skip("setFavourite: no current track to toggle")
+        }
+
         printVerdict()
+    }
+
+    /// Runs one bridge write and reports whether it actually changed anything.
+    /// A write that throws is a failure; so is one that returns cleanly and
+    /// changes nothing, which is how a terminology collision presents.
+    private func exerciseBridgeWrite(_ label: String, _ body: () async throws -> String) async {
+        do {
+            let outcome = try await body()
+            outcome.contains("NO EFFECT") ? fail("\(label): \(outcome)") : pass("\(label): \(outcome)")
+        } catch {
+            fail("\(label) threw: \((error as? MusicBridgeError)?.localizedDescription ?? "\(error)")")
+        }
     }
 
     // MARK: - Checks
