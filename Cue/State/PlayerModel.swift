@@ -30,6 +30,11 @@ final class PlayerModel {
 
     /// What the panel should be showing (§5's state table).
     enum Connection: Sendable, Equatable {
+        /// Before the first sync has answered. Distinct from `musicNotRunning`
+        /// on purpose: starting in that state made the panel assert "Music
+        /// isn't open" for the ~25 ms before it had actually asked, which read
+        /// as a flash of the wrong screen on every launch.
+        case connecting
         case musicNotRunning
         case automationDenied
         case connected
@@ -39,7 +44,7 @@ final class PlayerModel {
 
     // MARK: - Observed state
 
-    private(set) var connection: Connection = .musicNotRunning {
+    private(set) var connection: Connection = .connecting {
         didSet {
             guard oldValue != connection else { return }
             logger.notice("connection: \(String(describing: oldValue), privacy: .public) -> \(String(describing: self.connection), privacy: .public)")
@@ -144,10 +149,9 @@ final class PlayerModel {
         ))
         Task {
             await resync()
-            // `connection` starts as .musicNotRunning, and a property
-            // initialiser does not fire didSet — so if this first sync also
-            // fails, the value never *changes* and recovery would never start.
-            // Launching with Music closed is exactly that case.
+            // `connection` starts as .connecting, and a property initialiser
+            // does not fire didSet — so if this first sync leaves it unchanged
+            // recovery would never start.
             if connection != .connected { startRecovery() }
         }
     }

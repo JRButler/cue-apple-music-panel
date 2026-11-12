@@ -100,7 +100,7 @@ struct FavouriteButton: View {
         Button(action: action) {
             Image(systemName: isFavourite ? "star.fill" : "star")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(isFavourite ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
+                .foregroundStyle(isFavourite ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                 .frame(width: 22, height: 22)
                 .background(
                     Circle().fill(isHovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))

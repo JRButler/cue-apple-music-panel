@@ -94,9 +94,20 @@ enum PanelMetrics {
     /// alongside the artwork and a title worth reading.
     static let volumeZoneMinimum: CGFloat = 216
     static let volumeZoneMaximum: CGFloat = 320
-    static let titleMinimum: CGFloat = 130
+    static let titleMinimum: CGFloat = 118
 
+    /// §4.5's favourite button, which shares the title's line.
+    static let favouriteWidth: CGFloat = 22
+
+    /// Every element on the title row has to be counted here. Leaving the
+    /// favourite button out of this sum is why it vanished: the row was
+    /// over-constrained at the panel's existing width and SwiftUI squeezed the
+    /// fixed-size control to nothing.
     static var minimumWidth: CGFloat {
-        2 * edgeInset + artworkSize + 12 + titleMinimum + 12 + volumeZoneMinimum
+        2 * edgeInset
+            + artworkSize + 12
+            + titleMinimum + 12
+            + favouriteWidth + 12
+            + volumeZoneMinimum
     }
 }

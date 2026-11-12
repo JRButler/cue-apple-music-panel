@@ -60,6 +60,12 @@ struct PanelView: View {
     @ViewBuilder
     private var content: some View {
         switch model.connection {
+        case .connecting:
+            // The real layout, inert. Showing the same furniture that is about
+            // to appear means the first sync lands as a fill-in rather than a
+            // change of screen.
+            connected
+
         case .musicNotRunning:
             Placeholder(
                 title: "Music isn’t open",
