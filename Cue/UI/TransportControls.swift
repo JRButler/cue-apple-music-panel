@@ -29,7 +29,10 @@ struct TransportControls: View {
 
     /// §4.4's minimum hit targets.
     private let sideTarget: CGFloat = 34
-    private let centreTarget: CGFloat = 46
+    /// §4.4's floor exactly. The glyph inside is 27 pt, so this stays a
+    /// comfortable target while costing the panel as little height as the
+    /// spec permits.
+    private let centreTarget: CGFloat = 44
 
     var body: some View {
         HStack(spacing: 6) {

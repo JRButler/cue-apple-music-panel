@@ -59,8 +59,9 @@ struct ScrubBar: View {
 
     @Environment(\.playerModel) private var model
 
-    /// §4.2: at least 20 pt of interactive height.
-    private let interactiveHeight: CGFloat = 24
+    /// §4.2: at least 20 pt of interactive height. 22 keeps a point in hand
+    /// over the floor while giving the panel back two.
+    private let interactiveHeight: CGFloat = 22
     private let trackHeight: CGFloat = 5
     private let thumbDiameter: CGFloat = 13
 

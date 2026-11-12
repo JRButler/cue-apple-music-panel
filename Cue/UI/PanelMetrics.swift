@@ -32,18 +32,20 @@ enum PanelMetrics {
     /// a METRICS line whenever the two disagree. The last measurement put the
     /// stack at 112 pt against a predicted 115, so the slack below absorbs a
     /// few points either way rather than the panel clipping.
-    static let titleBlock: CGFloat = 33
-    /// §4.4's transport row, sized by the 46 pt play/pause target.
-    static let transport: CGFloat = 46
-    /// §4.2's scrub bar: just the 24 pt track row. The end-time caption that
-    /// used to sit under it was dropped — it cost 17 pt of panel height, and
-    /// the same information is now in the trailing label's tooltip.
-    static let scrubBar: CGFloat = 24
+    static let titleBlock: CGFloat = 31
+    /// §4.4's transport row, sized by the play/pause target. 44 is §4.4's
+    /// stated floor, so this is as tight as the spec allows.
+    static let transport: CGFloat = 44
+    /// §4.2's scrub bar. The spec's floor for the interactive area is 20 pt;
+    /// 22 keeps a point of margin over it. The end-time caption that used to
+    /// sit under this was dropped — it cost 17 pt, and the same information is
+    /// in the trailing label's tooltip.
+    static let scrubBar: CGFloat = 22
     /// §4.6's volume row, when it has one of its own.
     static let volumeRow: CGFloat = 22
 
     /// Vertical gap between rows of the right-hand stack.
-    static let rowGap: CGFloat = 6
+    static let rowGap: CGFloat = 4
 
     /// The margin around everything, equal on all four sides.
     ///
