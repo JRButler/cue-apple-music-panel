@@ -49,11 +49,16 @@ enum PanelMetrics {
 
     /// The margin around everything, equal on all four sides.
     ///
+    /// NOTE: the *visible* margin is `edgeInset`, which is this plus
+    /// `artworkTopNudge`. 12 here gives the 15 pt you actually see. The
+    /// optical nudge is folded in so the artwork sits with an equal margin on
+    /// every side rather than 3 pt tighter at the bottom.
+    ///
     /// Tunable without a rebuild; restart Cue to see a change:
     ///
-    ///     defaults write nz.slstudio.Cue PanelMargin 18
+    ///     defaults write nz.slstudio.Cue PanelMargin 15   # -> 18 pt visible
     ///     defaults delete nz.slstudio.Cue PanelMargin
-    static let defaultMargin: CGFloat = 14
+    static let defaultMargin: CGFloat = 12
 
     static var margin: CGFloat {
         let override = UserDefaults.standard.double(forKey: "PanelMargin")

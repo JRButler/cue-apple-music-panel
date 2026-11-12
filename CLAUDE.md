@@ -397,8 +397,10 @@ by the window and the layout rather than computed twice:
 - the artwork square is exactly the height of the stack beside it, so the two
   columns start and finish level
 - the content height follows from the artwork plus its margins
-- one margin, equal on all four sides (17 pt), tunable with
-  `defaults write nz.slstudio.Cue PanelMargin 18`
+- one margin, equal on all four sides (15 pt), tunable with
+  `defaults write nz.slstudio.Cue PanelMargin`. Note the knob is the margin
+  *before* the 3 pt optical nudge is folded in, so 12 there gives the 15 pt
+  you see.
 - the panel resizes **horizontally only**, from a minimum that always leaves
   room for §4.6's 160 pt volume track beside the artwork and a readable title
 
