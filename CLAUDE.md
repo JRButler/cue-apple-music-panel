@@ -293,11 +293,18 @@ Interaction:
   - `.frame(maxWidth: .infinity, alignment: .leading)` stretches the *frame* and
     aligns the child within it; it does not stretch the child. The marquee views
     needed it on themselves.
-  - Most importantly, the panel had been sitting at its **minimum width**, where
-    the title column is exactly its own 118 pt floor and therefore everything
-    scrolls. The default width is now 760 pt, at which a 273 pt title simply
-    fits. A marquee that is always running is usually a layout problem, not a
-    marquee problem.
+  - The panel had been sitting at its **minimum width**, where the title column
+    is exactly its own 118 pt floor and therefore everything scrolls. The
+    default width is now 760 pt, at which a 273 pt title simply fits. A marquee
+    that is always running is usually a layout problem, not a marquee problem.
+  - `updateNSView` runs on **every** SwiftUI update, and the panel re-renders
+    about once a second from the clock. Rebuilding the animation there removed
+    and re-added it each time, so it never escaped its opening pause and sat
+    still and clipped — indistinguishable from a marquee that does not work.
+    `MarqueeView` now rebuilds only when the text, font or width actually
+    changes, and counts its rebuilds so "restarting constantly" can be told
+    apart from "logged once": a counter that climbs after launch is the bug
+    returning.
 - Clicking the artwork brings Music.app forward (`activate`).
 
 ### 4.4 Transport ✅ confirmed

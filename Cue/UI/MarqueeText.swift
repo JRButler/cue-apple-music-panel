@@ -60,6 +60,16 @@ final class MarqueeView: NSView {
     private var pause: TimeInterval = 2
     private var speed: CGFloat = 22
 
+    /// What the running animation was built for. The animation is only rebuilt
+    /// when one of these actually changes.
+    ///
+    /// This matters more than it looks. `updateNSView` runs on EVERY SwiftUI
+    /// update, and the panel re-renders about once a second from the clock. An
+    /// unconditional rebuild removed and re-added the animation each time, so
+    /// it never escaped its opening pause — the text sat still and clipped,
+    /// looking for all the world like the marquee was broken.
+    private var builtFor: (text: String, width: CGFloat, font: NSFont?)?
+
     /// Space between the end of one copy and the start of the next.
     private let gap: CGFloat = 44
 
@@ -89,23 +99,39 @@ final class MarqueeView: NSView {
         self.pause = pause
         self.speed = speed
 
-        let changed = text != current || label.font != font || label.textColor != colour
         current = text
         for field in [label, trailing] {
             field.stringValue = text
             field.font = font
             field.textColor = colour
-            field.sizeToFit()
         }
-
-        if changed { needsLayout = true }
-        reflow()
+        reflowIfNeeded()
     }
 
     override func layout() {
         super.layout()
+        reflowIfNeeded()
+    }
+
+    /// Rebuilds only when the text, the font or the available width changed.
+    /// Leaving a running animation alone is the whole point.
+    private func reflowIfNeeded() {
+        let signature = (text: current, width: bounds.width, font: label.font)
+        if let builtFor,
+           builtFor.text == signature.text,
+           abs(builtFor.width - signature.width) < 0.5,
+           builtFor.font == signature.font {
+            return
+        }
+        builtFor = signature
+        Self.rebuilds += 1
         reflow()
     }
+
+    /// Counts rebuilds across all instances, so "it restarts constantly" can be
+    /// distinguished from "it was logged once". The dedupe on `log` hides the
+    /// difference otherwise.
+    nonisolated(unsafe) static var rebuilds = 0
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: NSView.noIntrinsicMetric, height: label.intrinsicContentSize.height)
@@ -128,7 +154,7 @@ final class MarqueeView: NSView {
             trailing.isHidden = true
             track.frame = NSRect(x: 0, y: y, width: max(textWidth, available), height: height)
             label.frame = NSRect(x: 0, y: 0, width: textWidth, height: height)
-            if available > 0 { Self.log("fits (\(Int(textWidth))pt in \(Int(available))pt): static") }
+            if available > 0 { Self.log("[rebuild #\(Self.rebuilds)] fits (\(Int(textWidth))pt in \(Int(available))pt): static") }
             return
         }
 
@@ -158,7 +184,7 @@ final class MarqueeView: NSView {
         animation.repeatCount = .infinity
         track.layer?.add(animation, forKey: "marquee")
 
-        Self.log("scrolling: text \(Int(textWidth))pt in \(Int(available))pt, cycle \(Int(cycle))pt over \(String(format: "%.1f", total))s — \(current)")
+        Self.log("[rebuild #\(Self.rebuilds)] scrolling: text \(Int(textWidth))pt in \(Int(available))pt, cycle \(Int(cycle))pt over \(String(format: "%.1f", total))s — \(current)")
     }
 
     /// The full rendered width of the string, independent of any frame.
