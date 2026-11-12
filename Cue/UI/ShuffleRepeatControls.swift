@@ -64,7 +64,7 @@ private struct StateGlyph: View {
 
     @State private var isHovering = false
 
-    private let target: CGFloat = 28
+    private let target: CGFloat = 30
 
     var body: some View {
         Button(action: action) {
@@ -72,7 +72,11 @@ private struct StateGlyph: View {
                 Circle()
                     .fill(isHovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
                 Image(systemName: symbol)
-                    .font(.system(size: 12, weight: .medium))
+                    // 16 pt, not 12. At 12 the numeral inside `repeat.1` is
+                    // invisible, so repeat-one and repeat-all were impossible to
+                    // tell apart and the control read as unresponsive rather
+                    // than three-state. Legible from about 16.
+                    .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
             }
             .frame(width: target, height: target)
@@ -99,9 +103,9 @@ struct FavouriteButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: isFavourite ? "star.fill" : "star")
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(isFavourite ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                .frame(width: 22, height: 22)
+                .frame(width: 24, height: 24)
                 .background(
                     Circle().fill(isHovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
                 )

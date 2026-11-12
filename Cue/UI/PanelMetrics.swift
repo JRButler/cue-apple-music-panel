@@ -97,7 +97,7 @@ enum PanelMetrics {
     static let titleMinimum: CGFloat = 118
 
     /// §4.5's favourite button, which shares the title's line.
-    static let favouriteWidth: CGFloat = 22
+    static let favouriteWidth: CGFloat = 24
 
     /// Every element on the title row has to be counted here. Leaving the
     /// favourite button out of this sum is why it vanished: the row was

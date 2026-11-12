@@ -122,6 +122,16 @@ struct PanelView: View {
                     NowPlayingLines(track: model.track, onActivate: { model.activateMusic() })
                         .frame(minWidth: PanelMetrics.titleMinimum, maxWidth: .infinity, alignment: .leading)
 
+                    // §4.5's favourite belongs with the track's information
+                    // rather than in the transport row: it describes the song,
+                    // not the playback.
+                    FavouriteButton(
+                        isFavourite: model.track?.isFavourite ?? false,
+                        isEnabled: model.connection == .connected && model.track != nil,
+                        action: { Task { await model.toggleFavourite() } }
+                    )
+                    .frame(width: PanelMetrics.favouriteWidth)
+
                     // Always on the title's line. The minimum width guarantees
                     // room for it, so it never has to move.
                     volumeControl
