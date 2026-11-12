@@ -101,7 +101,25 @@ struct TrackInfo: Sendable, Equatable, Identifiable {
     /// Seconds. Zero when Music reports no duration, which happens on streams.
     var duration: TimeInterval
 
-    var id: String { persistentID.isEmpty ? "\(name)\u{1F}\(artist)\u{1F}\(album)" : persistentID }
+    var id: String { persistentID.isEmpty ? composite : persistentID }
+
+    /// The key §4.3's artwork cache uses, and deliberately NOT `id`.
+    ///
+    /// The two sources of a TrackInfo do not always agree on the persistent ID:
+    /// the §3.2 notification payload sometimes yields none, in which case `id`
+    /// falls back to the composite while the AppleScript record supplies a hex
+    /// string. Keying artwork on `id` therefore made the notification path and
+    /// the sync path disagree about whether they were looking at the same
+    /// track, and every track change fetched its artwork twice — visible in the
+    /// log as two fetches of identical size, milliseconds apart.
+    ///
+    /// Title, artist and album are present in both, so the composite alone is
+    /// the one key both paths always produce identically.
+    var artworkKey: String { composite }
+
+    private var composite: String {
+        "\(name)\u{1F}\(artist)\u{1F}\(album)"
+    }
 
     /// `favorited` (`pLov`), which arrives free in the track record. Parsed now
     /// so M3 does not have to re-read it; nothing uses it yet.
@@ -165,6 +183,11 @@ enum MusicBridgeError: Error, Sendable, Equatable {
     /// -1712. Music did not answer inside the script's `with timeout`. Seen when
     /// Music is busy, and whenever an Automation prompt is waiting to be answered.
     case timedOut
+    /// -609. The Apple Event connection is stale, which is NOT the same as
+    /// Music being gone — it stays running and keeps playing. Seen after a
+    /// sleep/wake cycle, or if Music is relaunched underneath us. Transient:
+    /// retry rather than declaring the app absent.
+    case connectionLost
     case scriptError(code: Int, message: String)
     case malformedResult(String)
     case compilationFailed(String)
@@ -179,6 +202,8 @@ extension MusicBridgeError: LocalizedError {
             "Cue needs permission to control Music."
         case .timedOut:
             "Music didn't answer in time."
+        case .connectionLost:
+            "Lost the connection to Music. Reconnecting…"
         case let .scriptError(code, message):
             "Music returned error \(code): \(message)"
         case let .malformedResult(detail):

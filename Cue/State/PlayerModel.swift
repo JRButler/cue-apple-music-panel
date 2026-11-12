@@ -39,7 +39,13 @@ final class PlayerModel {
 
     // MARK: - Observed state
 
-    private(set) var connection: Connection = .musicNotRunning
+    private(set) var connection: Connection = .musicNotRunning {
+        didSet {
+            guard oldValue != connection else { return }
+            logger.notice("connection: \(String(describing: oldValue), privacy: .public) -> \(String(describing: self.connection), privacy: .public)")
+            connection == .connected ? stopRecovery() : startRecovery()
+        }
+    }
     private(set) var playerState: PlayerState = .stopped
     private(set) var track: TrackInfo?
     private(set) var volume: Int = 0
@@ -89,6 +95,13 @@ final class PlayerModel {
     /// notification path has already applied.
     private var appliedTrackKey: String?
 
+    /// Retries while anything other than `.connected`. See `startRecovery`.
+    private var recoveryTask: Task<Void, Never>?
+
+    /// How often to retry while disconnected. Slow enough to be free, often
+    /// enough that the panel is never wrong for long.
+    private static let recoveryInterval: TimeInterval = 3
+
     /// §4.6: a drag owns the volume until released, so a sync must not fight it.
     private var isAdjustingVolume = false
     private var lastVolumeSend: ContinuousClock.Instant?
@@ -122,14 +135,27 @@ final class PlayerModel {
                 playerState = .stopped
                 clock.reset()
                 stopPolling()
+            },
+            systemDidWake: { [weak self] in
+                guard let self else { return }
+                // Do not trust the pre-sleep state: re-read everything.
+                Task { await self.resync() }
             }
         ))
-        Task { await resync() }
+        Task {
+            await resync()
+            // `connection` starts as .musicNotRunning, and a property
+            // initialiser does not fire didSet — so if this first sync also
+            // fails, the value never *changes* and recovery would never start.
+            // Launching with Music closed is exactly that case.
+            if connection != .connected { startRecovery() }
+        }
     }
 
     func stop() {
         events.stop()
         stopPolling()
+        stopRecovery()
         artworkTask?.cancel()
         pendingVolumeSend?.cancel()
     }
@@ -143,6 +169,34 @@ final class PlayerModel {
         } else {
             stopPolling()
         }
+    }
+
+    // MARK: - Recovery
+    //
+    // No connection state is terminal. This is the bug that put "Music isn't
+    // open" over a live player for hours: a transient failure set the state,
+    // the state stopped the poll — because `updatePolling` requires
+    // `.connected` — and the poll was the only thing that could have noticed
+    // Music was fine. Recovery then depended entirely on a notification, and
+    // mid-track with nothing changing, none arrives.
+
+    private func startRecovery() {
+        guard recoveryTask == nil else { return }
+        logger.notice("recovery: retrying every \(Self.recoveryInterval, privacy: .public)s")
+        recoveryTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(Self.recoveryInterval))
+                guard !Task.isCancelled, let self else { return }
+                await resync()
+            }
+        }
+    }
+
+    private func stopRecovery() {
+        guard recoveryTask != nil else { return }
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        logger.notice("recovery: stopped, connected")
     }
 
     // MARK: - Syncing
@@ -171,6 +225,7 @@ final class PlayerModel {
         } catch {
             let described = (error as? MusicBridgeError)?.localizedDescription ?? error.localizedDescription
             connection = .failed(described)
+            stopPolling()
         }
     }
 
@@ -233,15 +288,15 @@ final class PlayerModel {
         }
 
         // Already showing, or already fetching, this track's art.
-        guard track.id != artworkKey else { return }
+        guard track.artworkKey != artworkKey else { return }
 
         artworkTask?.cancel()
         artworkTask = nil
-        artworkKey = track.id
+        artworkKey = track.artworkKey
 
-        if let cached = artworkCache.lookup(track.id) {
+        if let cached = artworkCache.lookup(track.artworkKey) {
             artwork = cached
-            logger.notice("artwork cache hit for \(track.id, privacy: .public)")
+            logger.notice("artwork cache hit for \(track.artworkKey, privacy: .public)")
             return
         }
 
@@ -256,10 +311,10 @@ final class PlayerModel {
                 guard !Task.isCancelled else { return }
 
                 let image = data.flatMap { NSImage(data: $0) }
-                artworkCache.store(image, for: track.id)
+                artworkCache.store(image, for: track.artworkKey)
 
                 // Only paint it if the track has not moved on underneath us.
-                guard self.track?.id == track.id else { return }
+                guard self.track?.artworkKey == track.artworkKey else { return }
                 artwork = image
 
                 let elapsed = ContinuousClock.now - started
@@ -270,7 +325,7 @@ final class PlayerModel {
             } catch {
                 guard !Task.isCancelled else { return }
                 // No artwork is a normal outcome, not a failure to report.
-                artworkCache.store(nil, for: track.id)
+                artworkCache.store(nil, for: track.artworkKey)
                 logger.notice("artwork unavailable: \((error as? MusicBridgeError)?.localizedDescription ?? "\(error)", privacy: .public)")
             }
         }
@@ -514,6 +569,12 @@ final class PlayerModel {
             stopPolling()
         } catch MusicBridgeError.automationDenied {
             connection = .automationDenied
+            stopPolling()
+        } catch MusicBridgeError.connectionLost {
+            // Stale Apple Event connection, not an absent app. Hand it to the
+            // recovery loop instead of claiming Music has gone.
+            logger.notice("tick: connection lost, handing over to recovery")
+            connection = .failed("Reconnecting to Music…")
             stopPolling()
         } catch {
             // A single dropped tick is not worth surfacing; the clock carries on

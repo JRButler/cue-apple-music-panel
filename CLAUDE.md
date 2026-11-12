@@ -94,7 +94,11 @@ The target uses a file-system-synchronised group, so a new `.swift` file under
 - **Guard rule:** before *any* call, check that `NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Music")` is non-empty. If Music isn't running, return `.musicNotRunning` and do not send the event. Sending `tell application "Music"` would launch it.
 - Map errors to a typed `MusicBridgeError`:
   - `-1743` (`errAEEventNotPermitted`) and `-1744` (`errAEEventWouldRequireUserConsent`) → `.automationDenied`
-  - `-600` (`procNotFound`) / `-609` (`connectionInvalid`) → `.musicNotRunning`
+  - `-600` (`procNotFound`) → `.musicNotRunning`
+  - `-609` (`connectionInvalid`) → `.connectionLost`, **not** `.musicNotRunning`.
+    -609 means the Apple Event connection has gone stale; Music is still running
+    and still playing. Conflating the two put "Music isn't open" over a live
+    player — see §6.4.
   - `-1712` (`errAETimeout`) → `.timedOut`
   - Anything else → `.scriptError(code, message)`
 - Permission is read with `AEDeterminePermissionToAutomateTarget(…, askUserIfNeeded: false)`,
@@ -731,6 +735,48 @@ what the window reports.
 - [ ] §4.3's placeholder, which needs a track with no artwork. The code path is
       straightforward — a nil payload is cached as "this track has none", so it
       is not re-fetched — but it has not been exercised against a real track.
+
+#### 6.4 Field report: the panel latched into "Music isn't open"
+
+After several days of real use the panel showed §5's "Music isn't open" state
+while Music carried on playing, and stayed that way. Three faults, compounding:
+
+1. **No connection state was recoverable.** `tick()` set the state and called
+   `stopPolling()`; `updatePolling()` only polls while `.connected`. So the
+   tick — the one thing that could have noticed Music was fine — stopped, and
+   recovery depended entirely on a notification arriving. Mid-track with
+   nothing changing, none does.
+2. **-609 was treated as "Music is gone".** It means the Apple Event connection
+   is stale, not that the app has quit, and a sleep/wake cycle is an easy way
+   to get one after hours of running.
+3. **None of the transitions logged**, so the log showed a perfectly healthy
+   session right up to the moment of the report, with no trace of the failure.
+
+The fixes, in order of importance:
+
+- **Nothing is terminal.** Any state other than `.connected` starts a 3 s
+  recovery loop that retries `resync()` until it succeeds. Note the edge case
+  it has to cover: `connection` is initialised to `.musicNotRunning`, and a
+  property initialiser does not fire `didSet`, so a *first* sync that fails
+  changes nothing and would never start recovery. `start()` therefore checks
+  explicitly.
+- **-609 is its own error**, handled as transient.
+- **Resync on `NSWorkspace.didWakeNotification`.** The pre-sleep connection is
+  not to be trusted.
+- **Every connection transition is logged**, so a recurrence leaves evidence:
+
+  ```sh
+  log show --last 6h --predicate 'subsystem == "nz.slstudio.Cue"' \
+    | grep -E 'connection:|recovery:'
+  ```
+
+The same report's log also showed **every track change fetching its artwork
+twice**, identical sizes milliseconds apart. The two sources of a `TrackInfo`
+do not always agree on the persistent ID — the §3.2 payload sometimes yields
+none, so `id` falls back to the title/artist/album composite while the
+AppleScript record supplies a hex string — and the dedupe guard was keyed on
+`id`. Artwork now keys on `TrackInfo.artworkKey`, the composite, which both
+paths always produce identically.
 
 ### M3 — Shuffle, repeat, favourite
 - Implement §4.5.

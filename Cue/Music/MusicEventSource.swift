@@ -37,6 +37,10 @@ final class MusicEventSource: NSObject {
         var playerInfo: (PlayerInfoPayload) -> Void = { _ in }
         var musicLaunched: () -> Void = {}
         var musicTerminated: () -> Void = {}
+        /// The machine woke. Apple Event connections do not reliably survive a
+        /// sleep, so whoever owns this should resync rather than trust the
+        /// state it had before.
+        var systemDidWake: () -> Void = {}
     }
 
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "nz.slstudio.Cue",
@@ -86,6 +90,13 @@ final class MusicEventSource: NSObject {
             name: NSWorkspace.didTerminateApplicationNotification,
             object: nil
         )
+        // Sleep is the most likely way a long-running connection goes stale.
+        workspaceCenter.addObserver(
+            self,
+            selector: #selector(systemDidWake(_:)),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
     }
 
     func stop() {
@@ -114,6 +125,11 @@ final class MusicEventSource: NSObject {
         guard Self.isMusic(notification) else { return }
         logger.info("Music terminated")
         handlers.musicTerminated()
+    }
+
+    @objc private func systemDidWake(_ notification: Notification) {
+        logger.info("System woke — resyncing, the Apple Event connection may be stale")
+        handlers.systemDidWake()
     }
 
     private static func isMusic(_ notification: Notification) -> Bool {

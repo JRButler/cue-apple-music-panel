@@ -493,9 +493,16 @@ final class MusicBridge {
             // -1743 refused; -1744 means consent was never granted. Both are the
             // same thing for the UI: §5's "needs permission" state.
             return .automationDenied
-        case Int(procNotFound), Int(connectionInvalid):
-            // -600 / -609: Music went away between the guard and the send.
+        case Int(procNotFound):
+            // -600: Music went away between the guard and the send.
             return .musicNotRunning
+        case Int(connectionInvalid):
+            // -609 is NOT "Music is gone". The app keeps running and keeps
+            // playing; it is the Apple Event connection that has gone stale,
+            // which happens across a sleep/wake cycle. Conflating the two made
+            // the panel declare "Music isn't open" over a live player, and —
+            // because that state stopped the poll — it never recovered.
+            return .connectionLost
         case Int(errAETimeout):
             // -1712: our `with timeout` elapsed. Distinct from a script fault,
             // and the state a pending permission prompt produces.
