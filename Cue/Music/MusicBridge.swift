@@ -276,8 +276,23 @@ final class MusicBridge {
         let descriptor = try run(.fetchArtwork)
         guard Self.isPresent(descriptor) else { return nil }
         let data = descriptor.data
-        return data.isEmpty ? nil : data
+
+        // Music sometimes answers with a token payload rather than an image —
+        // a 4-byte reply was observed moments after it relaunched, while it was
+        // presumably still warming up. Nothing that small can be an image, and
+        // passing it on as artwork led to a failed decode being cached as
+        // "this track has no artwork". Treat it as absent.
+        guard data.count >= Self.minimumPlausibleArtworkBytes else {
+            if !data.isEmpty {
+                logger.notice("Discarding \(data.count, privacy: .public)-byte artwork reply as implausible")
+            }
+            return nil
+        }
+        return data
     }
+
+    /// Smaller than any real encoded image; large enough to reject tokens.
+    private static let minimumPlausibleArtworkBytes = 128
 
     /// §4.6. Music's own output level, 0–100, not the system volume.
     func setVolume(_ volume: Int) async throws {

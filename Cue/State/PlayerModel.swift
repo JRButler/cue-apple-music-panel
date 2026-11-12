@@ -311,6 +311,22 @@ final class PlayerModel {
                 guard !Task.isCancelled else { return }
 
                 let image = data.flatMap { NSImage(data: $0) }
+
+                // Bytes that arrived but will not decode are a FAILURE, not a
+                // track without artwork. Caching the difference wrongly is what
+                // left the placeholder showing indefinitely after Music
+                // relaunched: one bad reply was remembered as "this track has
+                // none" and never retried. Clear the key so the next sync tries
+                // again, and cache nothing.
+                if data != nil, image == nil {
+                    logger.notice("artwork failed to decode; will retry")
+                    artworkKey = nil
+                    return
+                }
+
+                // Reaching here, `image` is nil only because Music genuinely
+                // reported no artwork — worth remembering, so it is not asked
+                // for again on every track change back to this song.
                 artworkCache.store(image, for: track.artworkKey)
 
                 // Only paint it if the track has not moved on underneath us.
@@ -324,9 +340,12 @@ final class PlayerModel {
                 logger.notice("\(String(format: "artwork fetched in %.1f ms (%d bytes)", ms, size), privacy: .public)")
             } catch {
                 guard !Task.isCancelled else { return }
-                // No artwork is a normal outcome, not a failure to report.
-                artworkCache.store(nil, for: track.artworkKey)
-                logger.notice("artwork unavailable: \((error as? MusicBridgeError)?.localizedDescription ?? "\(error)", privacy: .public)")
+                // An error is transient — Music busy, connection stale, timed
+                // out. Emphatically NOT evidence that the track has no artwork,
+                // so nothing is cached and the key is cleared so the next sync
+                // tries again.
+                artworkKey = nil
+                logger.notice("artwork fetch failed, will retry: \((error as? MusicBridgeError)?.localizedDescription ?? "\(error)", privacy: .public)")
             }
         }
     }
