@@ -270,6 +270,12 @@ final class MusicBridge {
         _ = try run(.playPause)
     }
 
+    /// Starts playback outright. Needed when nothing is queued, where
+    /// `playpause` has no current track to toggle and does nothing.
+    func play() async throws {
+        _ = try run(.play)
+    }
+
     func next() async throws {
         _ = try run(.nextTrack)
     }

@@ -658,8 +658,19 @@ final class PlayerModel {
         clock.setAdvancing(!wasAdvancing)
         updatePolling()
 
+        // §4.4 names `playpause`, and it is correct whenever a track is loaded.
+        // From a parked player it is not: it toggles *the current track*, and
+        // with nothing queued there is nothing to toggle, so the button
+        // appeared dead from a cold Music. Bare `play` starts it — measured
+        // with `--probe-play`.
+        let needsOutrightPlay = !wasAdvancing && (track == nil || playerState == .stopped)
+
         do {
-            try await bridge.playPause()
+            if needsOutrightPlay {
+                try await bridge.play()
+            } else {
+                try await bridge.playPause()
+            }
         } catch {
             playerState = wasAdvancing ? .playing : .paused
             clock.setAdvancing(wasAdvancing)

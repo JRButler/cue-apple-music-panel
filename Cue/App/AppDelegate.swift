@@ -93,6 +93,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             exit(probe.exitCode)
         }
 
+        if options.isPlayProbe {
+            Task {
+                let probe = M0Probe(controller: controller, options: options)
+                await probe.runPlayProbe()
+                exit(probe.exitCode)
+            }
+            return
+        }
+
         if options.isM3Probe {
             Task {
                 let probe = M0Probe(controller: controller, options: options)
@@ -170,6 +179,8 @@ struct LaunchOptions: Sendable {
     var isVolumeLatency = false
     /// Checks whether §4.5's three properties accept writes.
     var isM3Probe = false
+    /// Finds what starts playback from a parked Music.
+    var isPlayProbe = false
     /// Seconds to keep listening for `playerInfo` after the probe's fixed
     /// sequence, so a track change can be caught and timed.
     var listenSeconds: Int = 0
@@ -177,7 +188,7 @@ struct LaunchOptions: Sendable {
 
     /// True for any mode that should not build a panel.
     var isDiagnostic: Bool {
-        isProbe || isGrant || isDeny || isBench || isWatch || isDumpRecords || isTestClock || isMuteProbe || isVolumeLatency || isM3Probe
+        isProbe || isGrant || isDeny || isBench || isWatch || isDumpRecords || isTestClock || isMuteProbe || isVolumeLatency || isM3Probe || isPlayProbe
     }
 
     init(arguments: [String]) {
@@ -204,6 +215,8 @@ struct LaunchOptions: Sendable {
                 isVolumeLatency = true
             case "--probe-m3":
                 isM3Probe = true
+            case "--probe-play":
+                isPlayProbe = true
             case "--listen":
                 if let value = iterator.next(), let seconds = Int(value) { listenSeconds = seconds }
             case "--samples":

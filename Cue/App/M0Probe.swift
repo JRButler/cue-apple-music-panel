@@ -660,6 +660,75 @@ final class M0Probe {
         }
     }
 
+    /// What actually starts playback when Music is parked with nothing queued?
+    ///
+    /// `playpause` toggles "the current track", and with no current track there
+    /// is nothing to toggle — which is why Cue's play button does nothing from
+    /// a cold Music. This tries the alternatives and reports which work.
+    func runPlayProbe() async {
+        heading("starting playback from a parked Music")
+
+        guard controller.bridge.isMusicRunning else {
+            fail("Music is not running")
+            printVerdict()
+            return
+        }
+
+        func state() async -> String {
+            ((try? await controller.bridge.fetchAppState().playerState.rawValue) ?? "?")
+        }
+
+        emit("  starting state: \(await state())")
+        emit("")
+
+        let attempts: [(String, String)] = [
+            ("playpause (what the button does today)", """
+            tell application id "com.apple.Music" to playpause
+            """),
+            ("play, no argument", """
+            tell application id "com.apple.Music" to play
+            """),
+            ("play the current playlist", """
+            tell application id "com.apple.Music" to play current playlist
+            """),
+            ("play the Library playlist", """
+            tell application id "com.apple.Music"
+                play (first library playlist)
+            end tell
+            """),
+            ("play the first track of the library", """
+            tell application id "com.apple.Music"
+                play (first track of (first library playlist))
+            end tell
+            """),
+        ]
+
+        for (label, source) in attempts {
+            // Park it first, so each attempt starts from the same place.
+            _ = try? controller.bridge.rawDescriptor(source: """
+            tell application id "com.apple.Music" to stop
+            """)
+            try? await Task.sleep(for: .milliseconds(400))
+
+            do {
+                _ = try controller.bridge.rawDescriptor(source: source)
+                try? await Task.sleep(for: .milliseconds(900))
+                let now = await state()
+                now == "playing" ? pass("\(label) → \(now)") : fail("\(label) → \(now)")
+            } catch {
+                fail("\(label) → \((error as? MusicBridgeError)?.localizedDescription ?? "\(error)")")
+            }
+        }
+
+        // Leave it parked rather than playing.
+        _ = try? controller.bridge.rawDescriptor(source: """
+        tell application id "com.apple.Music" to stop
+        """)
+        emit("")
+        note("left stopped")
+        printVerdict()
+    }
+
     // MARK: - Checks
 
     /// Verifies every row of §3.1's error table without provoking each condition.

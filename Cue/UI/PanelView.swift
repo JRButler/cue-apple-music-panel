@@ -227,6 +227,7 @@ struct PanelView: View {
             clock: model.clock,
             duration: model.track?.duration ?? 0,
             isPlaying: model.playerState.isAdvancing,
+            hasTrack: model.track != nil,
             onSeek: { target in Task { await model.commitSeek(to: target) } },
             onScrubbingChanged: { model.setScrubbing($0) }
         )

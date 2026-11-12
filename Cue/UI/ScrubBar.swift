@@ -42,6 +42,11 @@ struct ScrubBar: View {
     let clock: PlaybackClock
     let duration: TimeInterval
     let isPlaying: Bool
+    /// False when nothing is queued at all. §5 wants an empty bar for that;
+    /// §4.2's indeterminate bar means something different — a real track whose
+    /// duration Music will not report, as some streams do. Rendering both the
+    /// same way made a parked player look like it was endlessly seeking.
+    let hasTrack: Bool
 
     /// Called once, on release, with the committed position.
     let onSeek: (TimeInterval) -> Void
@@ -136,7 +141,7 @@ struct ScrubBar: View {
     }
 
     private var trailingText: String {
-        guard isSeekable else { return "--:--" }
+        guard isSeekable else { return hasTrack ? "--:--" : "" }
         if model?.showsTotalTime == true {
             return TimeFormatting.total(duration)
         }

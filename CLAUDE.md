@@ -262,6 +262,10 @@ Interaction:
 - Hit target: at least a 20 pt tall interactive area, even if the visible track is thinner. Fixing fiddly controls is the point of the app.
 - Keyboard (when the panel is key): ← / → seek ±5 s, ⇧← / ⇧→ seek ±30 s.
 - For streaming tracks where the duration is 0 or missing, show an indeterminate bar and disable seeking.
+  **Only when a track actually exists.** "No duration" covers two different
+  states: a real track Music will not size, which earns the indeterminate bar,
+  and nothing queued at all, which earns §5's empty bar. Rendering both the
+  same way made a parked player look like it was endlessly seeking.
 
 ### 4.3 Album art and Now Playing info ✅ confirmed
 - Artwork preview: `raw data of artwork 1 of current track`, decoded to `NSImage`.
@@ -278,7 +282,13 @@ Interaction:
 ### 4.4 Transport ✅ confirmed
 - Layout: **previous · play/pause · next** as a centred group, with play/pause visibly larger than the buttons either side.
 - Hit targets: at least 32 pt for previous and next, and at least 44 pt for play/pause.
-- Commands: `previous track` / `playpause` / `next track`.
+- Commands: `previous track` / `playpause` / `next track` — **except from a
+  parked player**. `playpause` toggles *the current track*, so with nothing
+  queued it has nothing to toggle and does nothing at all; Cue's play button
+  was dead from a cold Music. Bare `play` starts playback and is used when
+  there is no current track. Measured with `tools/run-probe.sh --probe-play`:
+  `playpause` left it stopped, `play` started it, `play current playlist`
+  errored with -1700.
 - The play/pause icon reflects the actual player state, updating optimistically on click and reconciling on the next sync.
 - Previous follows Music's behaviour: more than 3 s in restarts the track.
 - Space toggles play/pause when the panel is key.

@@ -36,6 +36,8 @@ enum MusicScript: String, CaseIterable, Sendable {
     /// §3.3's full sync, off the timer. Three references, ~25 ms.
     case fetchState
     case playPause
+    /// Starts playback from a parked player, which `playpause` cannot.
+    case play
     case nextTrack
     case previousTrack
     /// Takes one argument, so it is invoked as a subroutine rather than recompiled.
@@ -71,6 +73,7 @@ enum MusicScript: String, CaseIterable, Sendable {
         case .fetchAppState: Self.fetchAppStateSource
         case .fetchState: Self.fetchStateSource
         case .playPause: Self.playPauseSource
+        case .play: Self.playSource
         case .nextTrack: Self.nextTrackSource
         case .previousTrack: Self.previousTrackSource
         case .seek: Self.seekSource
@@ -149,6 +152,17 @@ extension MusicScript {
     static let playPauseSource = """
     with timeout of 5 seconds
         tell application id "com.apple.Music" to playpause
+    end timeout
+    """
+
+    /// §4.4 names `playpause`, and that is right whenever something is loaded.
+    /// It is not enough on its own: `playpause` toggles *the current track*, so
+    /// with nothing queued it has nothing to toggle and silently does nothing —
+    /// Cue's play button did exactly that from a cold Music. Measured with
+    /// `--probe-play`: `playpause` left it stopped, bare `play` started it.
+    static let playSource = """
+    with timeout of 5 seconds
+        tell application id "com.apple.Music" to play
     end timeout
     """
 
