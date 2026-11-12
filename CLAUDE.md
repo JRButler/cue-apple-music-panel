@@ -823,8 +823,22 @@ for hours while the log showed a perfectly healthy session. **Log state
 transitions, not just activity.** Activity logging says what worked; transition
 logging is what tells you when something stopped.
 
-### M3 — Shuffle, repeat, favourite
-- Implement §4.5.
+### M3 — Shuffle, repeat, favourite — complete
+- Implement §4.5. ✅
+
+All three verified through `MusicBridge` itself, not a reimplementation of it:
+
+```
+✓ setShuffle:   toggled false -> true
+✓ setRepeat:    set to all
+✓ setFavourite: toggled false -> true
+```
+
+Shuffle and repeat flank the transport per §4.6a; favourite sits beside the
+title, since it describes the track rather than the playback. Two fixes also
+landed here that are not §4.5's: the play button could not start a parked
+Music (§4.4), and the panel claimed "Music isn't open" on launch before it had
+checked (§5).
 
 #### 6.5 M3 findings
 
@@ -870,6 +884,23 @@ would be illegible at 13 pt.
 **The lesson worth keeping is (2).** A probe that does not exercise the code
 path the app uses can report health while the app is broken. Prefer driving the
 real method over reproducing what it does.
+
+**Three more faults, all found by using it rather than testing it:**
+
+- **A launch flash.** `connection` began as `.musicNotRunning`, which asserts
+  something the app has not checked. There is now a `.connecting` state that
+  renders the same furniture, so the first sync fills it in.
+- **The favourite star was invisible**, twice over. First because the title row
+  needed exactly the panel's width before the star was added to the
+  minimum-width sum, so SwiftUI squeezed the fixed-width control to nothing.
+  Then because it had never actually been added to the view at all — the script
+  that placed it aborted on a later assertion, discarding the earlier write.
+  **A multi-edit script that writes at the end loses everything when one match
+  fails.** Verify the file, not the script's progress output.
+- **The repeat states were illegible.** At 12 pt the numeral inside `repeat.1`
+  does not render distinguishably, so repeat-one and repeat-all looked
+  identical and the control read as laggy rather than three-state. Rendering
+  the glyphs at 12/14/16/18 pt settled it: 16 pt is where it becomes readable.
 
 ### M4 — AirPlay
 - Implement §4.7.
