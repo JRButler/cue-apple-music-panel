@@ -306,10 +306,17 @@ Interaction:
   - `.frame(maxWidth: .infinity, alignment: .leading)` stretches the *frame* and
     aligns the child within it; it does not stretch the child. The marquee views
     needed it on themselves.
-  - The panel had been sitting at its **minimum width**, where the title column
-    is exactly its own 118 pt floor and therefore everything scrolls. The
-    default width is now 760 pt, at which a 273 pt title simply fits. A marquee
-    that is always running is usually a layout problem, not a marquee problem.
+  - The panel sitting at its **minimum width** gives the title column its 118 pt
+    floor, where everything scrolls. That is fine now the marquee works — the
+    text just takes longer to go by — and the compact panel is worth keeping.
+    The default width is 760 pt, at which most titles do not scroll at all.
+  - **Coalesce rebuilds.** A SwiftUI layout pass proposes several slightly
+    different widths before settling, and each tripped the change threshold:
+    bursts of 76–252 rebuilds inside one second were measured on every track
+    change, each tearing down and reinstalling the animation. It settled every
+    time, so nothing looked wrong. `reflowIfNeeded` now defers to the next
+    runloop turn, which collapses a burst into one rebuild — 4 at launch,
+    none during playback.
   - `updateNSView` runs on **every** SwiftUI update, and the panel re-renders
     about once a second from the clock. Rebuilding the animation there removed
     and re-added it each time, so it never escaped its opening pause and sat

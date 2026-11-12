@@ -133,18 +133,35 @@ final class MarqueeView: NSView {
         NSSize(width: NSView.noIntrinsicMetric, height: ceil(currentFont.boundingRectForFont.height))
     }
 
-    /// Rebuilds only when the text, the font or the available width changed.
+    private var reflowScheduled = false
+
+    /// Rebuilds only when the text, the font or the available width changed —
+    /// and then only once per runloop turn.
+    ///
+    /// The coalescing is not a nicety. A SwiftUI layout pass proposes several
+    /// slightly different widths before settling, and each one tripped the
+    /// threshold: bursts of 76 to 252 rebuilds inside a single second were
+    /// measured on every track change, each restarting the animation. It
+    /// settled, so it looked fine, but the marquee was being torn down and
+    /// rebuilt dozens of times before it stuck.
     private func reflowIfNeeded() {
-        let signature = (text: current, width: bounds.width, font: currentFont)
-        if let builtFor,
-           builtFor.text == signature.text,
-           abs(builtFor.width - signature.width) < 0.5,
-           builtFor.font == signature.font {
-            return
+        guard !reflowScheduled else { return }
+        reflowScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            reflowScheduled = false
+
+            let signature = (text: current, width: bounds.width, font: currentFont)
+            if let builtFor,
+               builtFor.text == signature.text,
+               abs(builtFor.width - signature.width) < 0.5,
+               builtFor.font == signature.font {
+                return
+            }
+            builtFor = signature
+            Self.rebuilds += 1
+            reflow()
         }
-        builtFor = signature
-        Self.rebuilds += 1
-        reflow()
     }
 
     /// Counts rebuilds across all instances, so "it restarts constantly" can be

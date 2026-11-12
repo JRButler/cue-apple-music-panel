@@ -104,15 +104,16 @@ enum PanelMetrics {
     /// floor and never "icon-sized".
     static let volumeZoneWidth: CGFloat = 230
     static let volumeZoneMinimum: CGFloat = volumeZoneWidth
-    /// A title column narrower than this cannot be read, scrolling or not.
+    /// How narrow the title column may get before the panel refuses to shrink.
     ///
-    /// It was 118 pt, which is what the column collapses to at the panel's
-    /// minimum width — a 118 pt window onto a 270 pt title, creeping at
-    /// 22 pt/s, is indistinguishable from clipped static text and useless
-    /// either way. The marquee was working perfectly; there was simply nowhere
-    /// to show it. Raising this raises the panel's minimum width with it, which
-    /// is the honest consequence: this layout needs the room.
-    static let titleMinimum: CGFloat = 220
+    /// Briefly raised to 220 while the marquee appeared broken at small sizes.
+    /// That turned out to be a rendering fault, not a width problem — see
+    /// §4.3 — and with the marquee genuinely scrolling the whole string a
+    /// narrow column reads fine: the text simply takes longer to go by. Back
+    /// to 118, which keeps the compact panel Julian prefers at a 557 pt
+    /// minimum. The default width stays generous at 760 so titles mostly do
+    /// not need to scroll at all.
+    static let titleMinimum: CGFloat = 118
 
     /// §4.5's favourite button, which shares the title's line.
     static let favouriteWidth: CGFloat = 24
