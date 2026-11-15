@@ -260,12 +260,6 @@ final class PanelController: NSObject, NSWindowDelegate {
 
         isAnimatingCollapse = true
 
-        let startMessage = String(
-            format: "COLLAPSE %@: from %.1f to %.1f, content pinned at %.1f",
-            collapsing ? "in" : "out", panel.frame.width, targetWidth, expandedWidth
-        )
-        logger.notice("\(startMessage, privacy: .public)")
-
         // Hold the content at its expanded width for the whole journey, and
         // show the expanded arrangement throughout — even while collapsing,
         // where it is progressively clipped away as the window narrows.
@@ -281,12 +275,6 @@ final class PanelController: NSObject, NSWindowDelegate {
         }, completionHandler: { [weak self] in
             guard let self else { return }
             isAnimatingCollapse = false
-
-            let endMessage = String(
-                format: "COLLAPSE done: window %.1f, wanted %.1f",
-                self.panel.frame.width, targetWidth
-            )
-            logger.notice("\(endMessage, privacy: .public)")
 
             if collapsing {
                 model.setCollapsed(true)
