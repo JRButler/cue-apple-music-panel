@@ -76,13 +76,18 @@ struct PanelView: View {
             Button(action: onToggleCollapse) {
                 Image(systemName: model.isCollapsed ? "chevron.left" : "chevron.right")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    // White over the scrim, since the artwork behind it could
+                    // be any colour; secondary is right against the panel.
+                    .foregroundStyle(model.isCollapsed
+                        ? AnyShapeStyle(.white.opacity(0.92))
+                        : AnyShapeStyle(.secondary))
                     .frame(width: PanelMetrics.chevronLane, height: PanelMetrics.artworkSize)
                     .background(
-                        // A scrim only when it is over the artwork, so it stays
-                        // legible against a busy cover.
+                        // A semi-transparent scrim only when it is over the
+                        // artwork, so the chevron stays legible against a busy
+                        // cover without hiding the art behind it.
                         model.isCollapsed
-                            ? AnyShapeStyle(.ultraThinMaterial)
+                            ? AnyShapeStyle(Color.black.opacity(0.3))
                             : AnyShapeStyle(.clear),
                         in: RoundedRectangle(cornerRadius: 5, style: .continuous)
                     )

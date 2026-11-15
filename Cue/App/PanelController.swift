@@ -264,18 +264,35 @@ final class PanelController: NSObject, NSWindowDelegate {
             }
         }
 
+        let duration: TimeInterval = 0.22
+
+        if !collapsing {
+            // Bring the controls back BEFORE the width animation finishes, so
+            // the two overlap. Waiting for completion left a distinct pause
+            // between the artwork arriving and the controls appearing; this
+            // starts the fade with the last of the travel still running, which
+            // reads as one movement rather than two steps.
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration * 0.55) { [weak self] in
+                // Still collapsed means the overlapped flip has not been
+                // pre-empted by another toggle.
+                guard let self, model.isCollapsed else { return }
+                withAnimation(.easeOut(duration: 0.16)) {
+                    model.setCollapsed(false)
+                }
+            }
+        }
+
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.22
+            context.duration = duration
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             panel.animator().setFrame(frame, display: true)
         }, completionHandler: { [weak self] in
             guard let self else { return }
             isAnimatingCollapse = false
             if !collapsing {
-                // Widened first; now bring the controls back into the room
-                // that exists for them.
-                withAnimation(.easeOut(duration: 0.15)) {
-                    model.setCollapsed(false)
+                // In case the overlapped flip above was pre-empted.
+                if model.isCollapsed {
+                    withAnimation(.easeOut(duration: 0.12)) { model.setCollapsed(false) }
                 }
                 // The expanded frame is only saveable once the model agrees it
                 // is expanded, and no further resize event will arrive.
