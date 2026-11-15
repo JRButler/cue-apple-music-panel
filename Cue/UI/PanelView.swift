@@ -21,7 +21,11 @@ struct PanelView: View {
     @State private var isHoveringChevron = false
 
     var body: some View {
-        ZStack {
+        // Leading, not the default centre. While expanding, the content is
+        // only the artwork square, and a centred ZStack slid it towards the
+        // middle of the widening panel before snapping it back left once the
+        // controls appeared and filled the row.
+        ZStack(alignment: .leading) {
             // §4.1: the panel is movable by its background. This has to sit
             // behind everything, and the vibrancy above it has to decline hit
             // testing, or a press on the background never reaches it. See
@@ -37,13 +41,8 @@ struct PanelView: View {
                 )
                 .allowsHitTesting(false)
 
-            Group {
-                if model.isCollapsed {
-                    collapsedContent
-                } else {
-                    content
-                }
-            }
+            content
+            .frame(maxWidth: .infinity, alignment: .leading)
             // One inset on every side. The artwork's own top nudge is already
             // folded into it, so the square sits with an equal margin all
             // round rather than 3 pt tighter at the bottom.
@@ -67,17 +66,6 @@ struct PanelView: View {
         .ignoresSafeArea()
     }
 
-    /// Collapsed: the artwork square and nothing else. It keeps its click to
-    /// open Music and its drag to move the panel.
-    private var collapsedContent: some View {
-        ArtworkView(
-            image: model.artwork,
-            trackKey: model.track?.id ?? "none",
-            size: PanelMetrics.artworkSize,
-            onActivate: { model.activateMusic() }
-        )
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-    }
 
     /// Sits in its own lane when expanded, and over the artwork's right edge
     /// when collapsed — where it fades in on hover so the art is unobstructed
@@ -89,7 +77,7 @@ struct PanelView: View {
                 Image(systemName: model.isCollapsed ? "chevron.left" : "chevron.right")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: PanelMetrics.chevronLane, height: 44)
+                    .frame(width: PanelMetrics.chevronLane, height: PanelMetrics.artworkSize)
                     .background(
                         // A scrim only when it is over the artwork, so it stays
                         // legible against a busy cover.
@@ -110,7 +98,17 @@ struct PanelView: View {
         }
         // Collapsed, the whole square is the hover target, so the chevron
         // appears whenever the pointer is anywhere over the panel.
-        .onHover { if model.isCollapsed { isHoveringChevron = $0 } }
+        //
+        // Tracked in AppKit rather than with `.onHover`, which misses the case
+        // that matters here: the panel resizing under a pointer that has not
+        // moved generates no enter event, so the chevron stayed hidden until
+        // the mouse left and came back.
+        .background(
+            HoverTracker { inside in
+                if model.isCollapsed { isHoveringChevron = inside }
+            }
+            .allowsHitTesting(false)
+        )
     }
 
     @ViewBuilder
@@ -159,11 +157,21 @@ struct PanelView: View {
         // Top-aligned, not centred. The artwork square and the stack beside it
         // are different heights, so centring offset the art downwards by half
         // the difference and it no longer started level with the title.
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: model.isCollapsed ? 0 : 12) {
+            // ONE artwork view in both states, never two.
+            //
+            // Collapsed and expanded were separate branches of an `if`, each
+            // building its own ArtworkView. SwiftUI treats those as different
+            // views, so expanding destroyed one and created the other — the
+            // art blinked out and back instead of staying put while the panel
+            // grew around it.
             ArtworkView(
                 image: model.artwork,
                 trackKey: model.track?.id ?? "none",
                 size: PanelMetrics.artworkSize,
+                dragExclusionTrailing: model.isCollapsed
+                    ? PanelMetrics.chevronLane + PanelMetrics.edgeInset / 2
+                    : 0,
                 onActivate: { model.activateMusic() }
             )
             // Reports where the square actually lands in the window, so the
@@ -172,6 +180,7 @@ struct PanelView: View {
                 PanelView.reportArtworkFrame(rect)
             }
 
+            if !model.isCollapsed {
             VStack(alignment: .leading, spacing: PanelMetrics.rowGap) {
                 // Title and artist, with the volume beside them when there is room.
                 HStack(alignment: .top, spacing: 12) {
@@ -238,6 +247,8 @@ struct PanelView: View {
             // errors have clipped the bottom of this panel.
             .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
                 PanelView.reportStackHeight(size.height)
+            }
+            .transition(.opacity)
             }
         }
     }

@@ -20,6 +20,13 @@ struct ArtworkView: View {
     /// The square's side. Driven by the panel's height, so the art fills the
     /// left-hand end.
     let size: CGFloat
+    /// Width at the trailing edge left free of the drag handle.
+    ///
+    /// The handle is a real AppKit view, and an NSView wins hit-testing over
+    /// SwiftUI content sitting above it. Collapsed, it covered the whole
+    /// square including the chevron, so hovers never reached the chevron and
+    /// clicks went to "open Music" instead of expanding.
+    var dragExclusionTrailing: CGFloat = 0
     let onActivate: () -> Void
 
     /// §4.3's floor, which the layout now comfortably exceeds.
@@ -57,7 +64,10 @@ struct ArtworkView: View {
         .contentShape(Rectangle())
         // §4.3: clicking brings Music forward — and §4.1: dragging here moves
         // the panel. See WindowDragging for why both need one gesture.
-        .windowDraggable(requiredClicks: 1, onClick: onActivate)
+        .overlay(alignment: .leading) {
+            WindowDragHandle(requiredClicks: 1, onClick: onActivate)
+                .frame(width: max(0, size - dragExclusionTrailing))
+        }
         .help("Click to show in Music, drag to move")
         .accessibilityLabel(image == nil ? "No artwork" : "Album artwork")
     }

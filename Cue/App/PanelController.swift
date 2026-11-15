@@ -200,9 +200,21 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// Horizontal resizing only, between the minimum and maximum widths. The
     /// height is fixed, so every resize comes back to the same number whichever
     /// edge or corner it was dragged from.
-    /// Collapsed, the panel is a fixed square and not resizable — the minimum
-    /// below would otherwise fight the collapse animation and snap it open.
+    /// True only while the collapse/expand animation is running.
+    private var isAnimatingCollapse = false
+
+    /// Collapsed, the panel is a fixed square and not resizable.
+    ///
+    /// The animation exemption matters more than it looks. Every intermediate
+    /// frame of an animated resize passes through here, and on expand the
+    /// model is no longer collapsed — so the clamp below snapped the very
+    /// first step straight up to the minimum width and the animation had
+    /// nowhere left to travel. It read as the panel popping open rather than
+    /// sliding, and smoothly only when the race happened to land the other way.
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        if isAnimatingCollapse {
+            return NSSize(width: frameSize.width, height: Self.contentHeight)
+        }
         if model.isCollapsed {
             return NSSize(width: PanelMetrics.collapsedWidth, height: Self.contentHeight)
         }
@@ -217,7 +229,15 @@ final class PanelController: NSObject, NSWindowDelegate {
     private static let expandedWidthKey = "ExpandedPanelWidth"
 
     /// Collapses to the artwork square, or restores the width it had before.
+    ///
+    /// The content is swapped at a different point in each direction, which is
+    /// what stops the expand looking wrong. Flipping the model first in both
+    /// directions meant the full set of controls rendered inside a 135 pt
+    /// window and then waited for it to catch up — a smooshed layout for the
+    /// length of the animation. Collapsing hides the controls first and then
+    /// shrinks; expanding widens first and brings them back at the end.
     func toggleCollapsed() {
+        guard !isAnimatingCollapse else { return }
         let collapsing = !model.isCollapsed
 
         if collapsing {
@@ -228,9 +248,6 @@ final class PanelController: NSObject, NSWindowDelegate {
             ? PanelMetrics.collapsedWidth
             : Self.restoredExpandedWidth()
 
-        // Flip the model first, or windowWillResize refuses the new width.
-        model.setCollapsed(collapsing)
-
         var frame = panel.frame
         // Grow and shrink from the left edge, so the panel's right-hand side —
         // where the chevron is — stays put under the pointer.
@@ -238,11 +255,33 @@ final class PanelController: NSObject, NSWindowDelegate {
         frame.size.width = targetWidth
         frame = Self.clamped(frame)
 
-        NSAnimationContext.runAnimationGroup { context in
+        isAnimatingCollapse = true
+
+        if collapsing {
+            // Controls out, then shrink into the space they left.
+            withAnimation(.easeOut(duration: 0.12)) {
+                model.setCollapsed(true)
+            }
+        }
+
+        NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.22
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             panel.animator().setFrame(frame, display: true)
-        }
+        }, completionHandler: { [weak self] in
+            guard let self else { return }
+            isAnimatingCollapse = false
+            if !collapsing {
+                // Widened first; now bring the controls back into the room
+                // that exists for them.
+                withAnimation(.easeOut(duration: 0.15)) {
+                    model.setCollapsed(false)
+                }
+                // The expanded frame is only saveable once the model agrees it
+                // is expanded, and no further resize event will arrive.
+                saveFrame()
+            }
+        })
     }
 
     private static func restoredExpandedWidth() -> CGFloat {
