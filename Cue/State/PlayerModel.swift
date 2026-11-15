@@ -86,13 +86,28 @@ final class PlayerModel {
     /// nothing at all until it is expanded or a notification arrives.
     private(set) var isCollapsed: Bool = UserDefaults.standard.bool(forKey: "PanelCollapsed")
 
-    func setCollapsed(_ collapsed: Bool) {
+    /// Width the content should lay itself out at, overriding the window's.
+    ///
+    /// Set for the duration of the collapse animation so the controls are
+    /// already laid out at their final width while the window travels — the
+    /// window reveals or conceals them, like a drawer, instead of the content
+    /// re-laying-out mid-flight. That re-layout was expensive enough to stall
+    /// the window animation partway and then let it jump to the end.
+    private(set) var animationLayoutWidth: CGFloat?
+
+    func setAnimationLayoutWidth(_ width: CGFloat?) {
+        animationLayoutWidth = width
+    }
+
+    func setCollapsed(_ collapsed: Bool, resync shouldResync: Bool = true) {
         guard collapsed != isCollapsed else { return }
         isCollapsed = collapsed
         UserDefaults.standard.set(collapsed, forKey: "PanelCollapsed")
         logger.notice("panel \(collapsed ? "collapsed" : "expanded", privacy: .public)")
         updatePolling()
-        if !collapsed { Task { await resync() } }
+        // Deferred by the caller during an animation: an AppleScript round
+        // trip runs on the main thread and would stall it.
+        if !collapsed, shouldResync { Task { await resync() } }
     }
 
     // MARK: - Dependencies

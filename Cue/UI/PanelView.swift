@@ -42,6 +42,21 @@ struct PanelView: View {
                 .allowsHitTesting(false)
 
             content
+            // During the collapse animation this is pinned to the final
+            // width, so no layout happens while the window travels. The
+            // window clips it, which is what makes it read as a drawer.
+            //
+            // The padding below is applied OUTSIDE this frame, so the value
+            // pinned here must be the window's width minus the insets, not
+            // the window's width. Pinning the full width laid the content out
+            // 30 pt wider than the window for the length of the animation and
+            // then snapped it 30 pt narrower when the override was released —
+            // which is exactly the "expands slightly too wide, holds, then
+            // redraws correctly" that was reported.
+            .frame(
+                width: model.animationLayoutWidth.map { $0 - 2 * PanelMetrics.edgeInset },
+                alignment: .leading
+            )
             .frame(maxWidth: .infinity, alignment: .leading)
             // One inset on every side. The artwork's own top nudge is already
             // folded into it, so the square sits with an equal margin all
@@ -51,6 +66,8 @@ struct PanelView: View {
             // Last in the ZStack, so it sits above the content.
             chevron
         }
+        // Content pinned wider than the window must not spill outside it.
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .environment(\.playerModel, model)
         // The window's size is authoritative; asking for more than it has is
         // what made a live resize look like the panel was squashing.

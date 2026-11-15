@@ -230,12 +230,16 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     /// Collapses to the artwork square, or restores the width it had before.
     ///
-    /// The content is swapped at a different point in each direction, which is
-    /// what stops the expand looking wrong. Flipping the model first in both
-    /// directions meant the full set of controls rendered inside a 135 pt
-    /// window and then waited for it to catch up — a smooshed layout for the
-    /// length of the animation. Collapsing hides the controls first and then
-    /// shrinks; expanding widens first and brings them back at the end.
+    /// Nothing about the content changes while the window is travelling. The
+    /// controls are laid out at their expanded width for the whole animation
+    /// and the window reveals or conceals them — a drawer, rather than a
+    /// resize. Two earlier attempts both failed on the same cause: swapping
+    /// the content mid-flight forces SwiftUI to build and lay out the entire
+    /// control tree on the main thread, which stalled the window animation
+    /// partway and then let it jump to the end.
+    ///
+    /// The AppleScript resync is deferred past the animation for the same
+    /// reason — it is a main-thread round trip.
     func toggleCollapsed() {
         guard !isAnimatingCollapse else { return }
         let collapsing = !model.isCollapsed
@@ -244,9 +248,8 @@ final class PanelController: NSObject, NSWindowDelegate {
             UserDefaults.standard.set(Double(panel.frame.width), forKey: Self.expandedWidthKey)
         }
 
-        let targetWidth = collapsing
-            ? PanelMetrics.collapsedWidth
-            : Self.restoredExpandedWidth()
+        let expandedWidth = collapsing ? panel.frame.width : Self.restoredExpandedWidth()
+        let targetWidth = collapsing ? PanelMetrics.collapsedWidth : expandedWidth
 
         var frame = panel.frame
         // Grow and shrink from the left edge, so the panel's right-hand side —
@@ -257,46 +260,45 @@ final class PanelController: NSObject, NSWindowDelegate {
 
         isAnimatingCollapse = true
 
-        if collapsing {
-            // Controls out, then shrink into the space they left.
-            withAnimation(.easeOut(duration: 0.12)) {
-                model.setCollapsed(true)
-            }
-        }
+        let startMessage = String(
+            format: "COLLAPSE %@: from %.1f to %.1f, content pinned at %.1f",
+            collapsing ? "in" : "out", panel.frame.width, targetWidth, expandedWidth
+        )
+        logger.notice("\(startMessage, privacy: .public)")
 
-        let duration: TimeInterval = 0.22
-
+        // Hold the content at its expanded width for the whole journey, and
+        // show the expanded arrangement throughout — even while collapsing,
+        // where it is progressively clipped away as the window narrows.
+        model.setAnimationLayoutWidth(expandedWidth)
         if !collapsing {
-            // Bring the controls back BEFORE the width animation finishes, so
-            // the two overlap. Waiting for completion left a distinct pause
-            // between the artwork arriving and the controls appearing; this
-            // starts the fade with the last of the travel still running, which
-            // reads as one movement rather than two steps.
-            DispatchQueue.main.asyncAfter(deadline: .now() + duration * 0.55) { [weak self] in
-                // Still collapsed means the overlapped flip has not been
-                // pre-empted by another toggle.
-                guard let self, model.isCollapsed else { return }
-                withAnimation(.easeOut(duration: 0.16)) {
-                    model.setCollapsed(false)
-                }
-            }
+            model.setCollapsed(false, resync: false)
         }
 
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = duration
+            context.duration = 0.24
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             panel.animator().setFrame(frame, display: true)
         }, completionHandler: { [weak self] in
             guard let self else { return }
             isAnimatingCollapse = false
-            if !collapsing {
-                // In case the overlapped flip above was pre-empted.
-                if model.isCollapsed {
-                    withAnimation(.easeOut(duration: 0.12)) { model.setCollapsed(false) }
-                }
-                // The expanded frame is only saveable once the model agrees it
-                // is expanded, and no further resize event will arrive.
+
+            let endMessage = String(
+                format: "COLLAPSE done: window %.1f, wanted %.1f",
+                self.panel.frame.width, targetWidth
+            )
+            logger.notice("\(endMessage, privacy: .public)")
+
+            if collapsing {
+                model.setCollapsed(true)
+            } else {
                 saveFrame()
+            }
+            // Release the override so the content tracks the window again.
+            model.setAnimationLayoutWidth(nil)
+
+            // Now that nothing is animating, it is safe to touch Music.
+            if !collapsing {
+                Task { await self.model.resync() }
             }
         })
     }
