@@ -18,7 +18,11 @@ struct PanelView: View {
     /// Supplied by PanelController, which owns the window animation.
     let onToggleCollapse: () -> Void
 
+    /// The chevron itself, which drives its hover scrim in both states.
     @State private var isHoveringChevron = false
+    /// Anywhere over the panel. Only used collapsed, where it is what reveals
+    /// the chevron at all.
+    @State private var isHoveringPanel = false
 
     var body: some View {
         // Leading, not the default centre. While expanding, the content is
@@ -95,24 +99,18 @@ struct PanelView: View {
                     .font(.system(size: 11, weight: .semibold))
                     // White over the scrim, since the artwork behind it could
                     // be any colour; secondary is right against the panel.
-                    .foregroundStyle(model.isCollapsed
-                        ? AnyShapeStyle(.white.opacity(0.92))
-                        : AnyShapeStyle(.secondary))
+                    .foregroundStyle(chevronForeground)
                     .frame(width: PanelMetrics.chevronLane, height: PanelMetrics.artworkSize)
                     .background(
-                        // A semi-transparent scrim only when it is over the
-                        // artwork, so the chevron stays legible against a busy
-                        // cover without hiding the art behind it.
-                        model.isCollapsed
-                            ? AnyShapeStyle(Color.black.opacity(0.3))
-                            : AnyShapeStyle(.clear),
+                        chevronScrim,
                         in: RoundedRectangle(cornerRadius: 5, style: .continuous)
                     )
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .opacity(model.isCollapsed && !isHoveringChevron ? 0 : 1)
-            .animation(.easeInOut(duration: 0.15), value: isHoveringChevron)
+            .opacity(model.isCollapsed && !isHoveringPanel ? 0 : 1)
+            .animation(.easeInOut(duration: 0.15), value: isHoveringPanel)
+            .animation(.easeInOut(duration: 0.12), value: isHoveringChevron)
             .animation(.easeInOut(duration: 0.15), value: model.isCollapsed)
             .onHover { isHoveringChevron = $0 }
             .help(model.isCollapsed ? "Expand" : "Collapse to artwork")
@@ -127,10 +125,29 @@ struct PanelView: View {
         // the mouse left and came back.
         .background(
             HoverTracker { inside in
-                if model.isCollapsed { isHoveringChevron = inside }
+                isHoveringPanel = inside
             }
             .allowsHitTesting(false)
         )
+    }
+
+    /// Collapsed, white over a dark scrim, since the artwork behind could be
+    /// any colour. Expanded, it sits on the panel and follows the same
+    /// secondary-to-primary hover treatment as the transport buttons.
+    private var chevronForeground: AnyShapeStyle {
+        if model.isCollapsed {
+            return AnyShapeStyle(.white.opacity(0.92))
+        }
+        return isHoveringChevron ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)
+    }
+
+    /// The same full-height scrim in both states — darkened over artwork,
+    /// and the standard hover fill over the panel.
+    private var chevronScrim: AnyShapeStyle {
+        if model.isCollapsed {
+            return AnyShapeStyle(Color.black.opacity(isHoveringChevron ? 0.42 : 0.3))
+        }
+        return isHoveringChevron ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear)
     }
 
     @ViewBuilder
