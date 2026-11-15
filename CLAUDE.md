@@ -17,6 +17,7 @@ A floating, always-available control panel for Apple Music on macOS. It replaces
 **Non-goals (for now)**
 - Controlling other players (Spotify, browsers). That would need the private MediaRemote framework.
 - Time-synced lyrics or the Up Next queue. Neither is exposed via scripting; we link out to Music instead.
+- AirPlay device switching. Declined in §4.7 rather than merely deferred: it conflicts with §4.1's focus contract, and macOS routes audio perfectly well without us.
 - Mac App Store distribution. We ship as a Developer ID–signed, notarised build, with no sandbox.
 
 ---
@@ -408,9 +409,31 @@ An intermediate version moved the volume between the title's line and a row of
 its own depending on width. It worked, but it was more machinery than the space
 it saved, and the fixed minimum width replaced it.
 
-### 4.7 AirPlay picker ⏳ proposed
-- Popover listing `AirPlay devices` with name and kind. Multi-select sets `current AirPlay devices`.
-- Show which devices are currently selected.
+### 4.7 AirPlay picker ❌ declined
+
+~~Popover listing `AirPlay devices` with name and kind. Multi-select sets
+`current AirPlay devices`.~~
+
+**Not built, decided before starting M4.** Output routing stays in Music and
+Control Centre; Cue controls playback.
+
+The decisive reason is §4.1's focus contract. A popover containing a
+selectable device list needs key status to be usable — arrow keys, selection,
+click-outside-to-dismiss — and the panel is built never to take focus, which
+is verified and is the property that lets it be used while you type. Breaking
+that for the rarest action in the app is a bad trade.
+
+Supporting reasons: output switching is a roughly daily action in a panel
+earning its space on constant ones; macOS already offers two faster routes
+from anywhere (Control Centre's Sound section, ⌥-click on the menu-bar
+volume); and `current AirPlay devices` is list-valued with multi-select
+writes, which given §6.3–§6.7's catalogue of surprises on simple booleans is
+the riskiest bridge work in the spec.
+
+**If it is ever wanted, the status item menu is the place — not the panel.**
+An `NSMenu` runs its own event loop and so does not disturb the focus
+contract, costs no panel space, and a device list with checkmarks maps
+naturally onto multi-select. §4.9's menu is the natural host.
 
 ### 4.8 Escape hatches ⏳ proposed
 - "Lyrics" and "Up Next" buttons that bring Music.app forward. No UI scripting.
@@ -1027,10 +1050,12 @@ into one value.** -609 vs "quit"; a decode failure vs "no artwork"; an unsized
 track vs no track; an empty process lookup vs "not running". Each looked fine
 until something real hit the second case.
 
-### M4 — AirPlay
-- Implement §4.7.
+### ~~M4 — AirPlay~~ — dropped
 
-### M5 — Polish
+§4.7 was declined before this milestone began; see that section. Nothing else
+was scoped into M4, so it is gone rather than empty.
+
+### M4 — Polish (was M5)
 - Implement §4.8 and §4.9.
 - Add Developer ID signing and notarisation.
 
