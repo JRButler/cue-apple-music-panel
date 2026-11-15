@@ -48,6 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusItem = StatusItemController(
             togglePanel: { panel.toggle() },
+            isAlwaysOnTop: { panel.isAlwaysOnTop },
+            setAlwaysOnTop: { panel.setAlwaysOnTop($0) },
             quit: { NSApp.terminate(nil) }
         )
 

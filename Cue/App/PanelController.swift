@@ -102,7 +102,7 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     private func configure() {
         panel.isFloatingPanel = true
-        panel.level = .floating
+        panel.level = Self.storedAlwaysOnTop ? .floating : .normal
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
         // The focus contract. `becomesKeyOnlyIfNeeded` is what stops a click on
@@ -222,6 +222,24 @@ final class PanelController: NSObject, NSWindowDelegate {
             width: min(max(frameSize.width, Self.minWidth), Self.maxWidth),
             height: Self.contentHeight
         )
+    }
+
+    // MARK: - Always on top (§4.9)
+
+    private static let alwaysOnTopKey = "AlwaysOnTop"
+
+    /// Defaults to on: a floating panel is the point of the app, and §4.1
+    /// treats it as the normal state.
+    private static var storedAlwaysOnTop: Bool {
+        UserDefaults.standard.object(forKey: alwaysOnTopKey) as? Bool ?? true
+    }
+
+    var isAlwaysOnTop: Bool { panel.level == .floating }
+
+    func setAlwaysOnTop(_ onTop: Bool) {
+        UserDefaults.standard.set(onTop, forKey: Self.alwaysOnTopKey)
+        panel.level = onTop ? .floating : .normal
+        logger.notice("always on top: \(onTop, privacy: .public)")
     }
 
     // MARK: - Collapse
