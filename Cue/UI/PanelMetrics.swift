@@ -133,6 +133,15 @@ enum PanelMetrics {
     /// sit on top of the volume control or the scrub bar's trailing label.
     static let chevronLane: CGFloat = 18
 
+    /// Breathing room between the controls and the chevron's hover scrim, so
+    /// the two do not touch.
+    static let chevronGap: CGFloat = 8
+
+    /// Total width the chevron claims on the right: its own lane, the gap
+    /// before it, and the margin after it — which is what puts the scrim
+    /// inside the panel's border rather than flush against the window edge.
+    static var chevronReserve: CGFloat { chevronLane + chevronGap }
+
     /// Collapsed, the panel is exactly the artwork square plus its margins —
     /// the chevron overlays the art rather than taking a lane of its own.
     static var collapsedWidth: CGFloat { artworkSize + 2 * edgeInset }
@@ -143,6 +152,6 @@ enum PanelMetrics {
             + titleMinimum + 12
             + favouriteWidth + 12
             + volumeZoneMinimum
-            + chevronLane
+            + chevronReserve
     }
 }

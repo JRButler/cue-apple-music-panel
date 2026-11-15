@@ -114,7 +114,12 @@ struct PanelView: View {
             .animation(.easeInOut(duration: 0.15), value: model.isCollapsed)
             .onHover { isHoveringChevron = $0 }
             .help(model.isCollapsed ? "Expand" : "Collapse to artwork")
-            .padding(.trailing, model.isCollapsed ? PanelMetrics.edgeInset / 2 : 2)
+            // Expanded, the chevron sits inside the panel's own margin rather
+            // than against the window edge, so its hover scrim lines up with
+            // the border the rest of the layout respects.
+            .padding(.trailing, model.isCollapsed
+                ? PanelMetrics.edgeInset / 2
+                : PanelMetrics.edgeInset)
         }
         // Collapsed, the whole square is the hover target, so the chevron
         // appears whenever the pointer is anywhere over the panel.
@@ -243,7 +248,7 @@ struct PanelView: View {
                     // room for it, so it never has to move.
                     volumeControl
                         .frame(width: PanelMetrics.volumeZoneWidth)
-                        .padding(.trailing, PanelMetrics.chevronLane)
+                        .padding(.trailing, PanelMetrics.chevronReserve)
                 }
 
                 // Transport sits directly above the scrub bar, centred, and
@@ -273,7 +278,7 @@ struct PanelView: View {
                 }
 
                 scrubBar
-                    .padding(.trailing, PanelMetrics.chevronLane)
+                    .padding(.trailing, PanelMetrics.chevronReserve)
             }
             // The optical nudge is applied HERE, to the text column, not to the
             // artwork. A Text view's box starts a little above its glyphs, so
