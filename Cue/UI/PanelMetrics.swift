@@ -129,11 +129,20 @@ enum PanelMetrics {
     /// favourite button out of this sum is why it vanished: the row was
     /// over-constrained at the panel's existing width and SwiftUI squeezed the
     /// fixed-size control to nothing.
+    /// A lane on the right-hand edge for the collapse chevron, so it does not
+    /// sit on top of the volume control or the scrub bar's trailing label.
+    static let chevronLane: CGFloat = 18
+
+    /// Collapsed, the panel is exactly the artwork square plus its margins —
+    /// the chevron overlays the art rather than taking a lane of its own.
+    static var collapsedWidth: CGFloat { artworkSize + 2 * edgeInset }
+
     static var minimumWidth: CGFloat {
         2 * edgeInset
             + artworkSize + 12
             + titleMinimum + 12
             + favouriteWidth + 12
             + volumeZoneMinimum
+            + chevronLane
     }
 }

@@ -78,6 +78,23 @@ final class PlayerModel {
     /// True while the panel is hidden, which stops polling entirely (§3.3).
     private(set) var isPanelVisible = false
 
+    /// Collapsed to just the artwork square. Persisted, so the panel comes
+    /// back the way it was left.
+    ///
+    /// Collapsed there is no scrub bar, no marquee and no clock on screen, so
+    /// nothing needs the 0.9 s tick — polling stops and the panel costs
+    /// nothing at all until it is expanded or a notification arrives.
+    private(set) var isCollapsed: Bool = UserDefaults.standard.bool(forKey: "PanelCollapsed")
+
+    func setCollapsed(_ collapsed: Bool) {
+        guard collapsed != isCollapsed else { return }
+        isCollapsed = collapsed
+        UserDefaults.standard.set(collapsed, forKey: "PanelCollapsed")
+        logger.notice("panel \(collapsed ? "collapsed" : "expanded", privacy: .public)")
+        updatePolling()
+        if !collapsed { Task { await resync() } }
+    }
+
     // MARK: - Dependencies
 
     private let bridge: MusicBridge
@@ -379,7 +396,11 @@ final class PlayerModel {
                 let data = try await bridge.fetchArtwork()
                 guard !Task.isCancelled else { return }
 
-                let image = data.flatMap { NSImage(data: $0) }
+                // Decoded at the size it will be drawn, not at full
+                // resolution — see ArtworkCache.decode.
+                let image = data.flatMap {
+                    ArtworkCache.decode($0, displaySize: PanelMetrics.artworkSize)
+                }
 
                 // Bytes that arrived but will not decode are a FAILURE, not a
                 // track without artwork. Caching the difference wrongly is what
@@ -573,7 +594,10 @@ final class PlayerModel {
     // MARK: - Polling (§3.3)
 
     private func updatePolling() {
-        let shouldPoll = isPanelVisible && playerState.isAdvancing && connection == .connected
+        let shouldPoll = isPanelVisible
+            && !isCollapsed
+            && playerState.isAdvancing
+            && connection == .connected
         shouldPoll ? startPolling() : stopPolling()
     }
 

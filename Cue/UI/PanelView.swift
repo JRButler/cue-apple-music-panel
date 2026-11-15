@@ -15,6 +15,10 @@ import SwiftUI
 struct PanelView: View {
 
     let model: PlayerModel
+    /// Supplied by PanelController, which owns the window animation.
+    let onToggleCollapse: () -> Void
+
+    @State private var isHoveringChevron = false
 
     var body: some View {
         ZStack {
@@ -33,14 +37,20 @@ struct PanelView: View {
                 )
                 .allowsHitTesting(false)
 
-            content
-                // One inset on every side. The artwork's own top nudge is
-                // already folded into it, so the square sits with an equal
-                // margin all round rather than 3 pt tighter at the bottom.
-                // Genuinely uniform now: the artwork is the tallest element in
-                // the row and carries no nudge of its own, so this inset is its
-                // margin on all four sides.
-                .padding(PanelMetrics.edgeInset)
+            Group {
+                if model.isCollapsed {
+                    collapsedContent
+                } else {
+                    content
+                }
+            }
+            // One inset on every side. The artwork's own top nudge is already
+            // folded into it, so the square sits with an equal margin all
+            // round rather than 3 pt tighter at the bottom.
+            .padding(PanelMetrics.edgeInset)
+
+            // Last in the ZStack, so it sits above the content.
+            chevron
         }
         .environment(\.playerModel, model)
         // The window's size is authoritative; asking for more than it has is
@@ -55,6 +65,52 @@ struct PanelView: View {
         // twice. The panel draws its own background, so there is no safe area
         // worth respecting here.
         .ignoresSafeArea()
+    }
+
+    /// Collapsed: the artwork square and nothing else. It keeps its click to
+    /// open Music and its drag to move the panel.
+    private var collapsedContent: some View {
+        ArtworkView(
+            image: model.artwork,
+            trackKey: model.track?.id ?? "none",
+            size: PanelMetrics.artworkSize,
+            onActivate: { model.activateMusic() }
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+
+    /// Sits in its own lane when expanded, and over the artwork's right edge
+    /// when collapsed — where it fades in on hover so the art is unobstructed
+    /// at rest.
+    private var chevron: some View {
+        HStack {
+            Spacer(minLength: 0)
+            Button(action: onToggleCollapse) {
+                Image(systemName: model.isCollapsed ? "chevron.left" : "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: PanelMetrics.chevronLane, height: 44)
+                    .background(
+                        // A scrim only when it is over the artwork, so it stays
+                        // legible against a busy cover.
+                        model.isCollapsed
+                            ? AnyShapeStyle(.ultraThinMaterial)
+                            : AnyShapeStyle(.clear),
+                        in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(model.isCollapsed && !isHoveringChevron ? 0 : 1)
+            .animation(.easeInOut(duration: 0.15), value: isHoveringChevron)
+            .animation(.easeInOut(duration: 0.15), value: model.isCollapsed)
+            .onHover { isHoveringChevron = $0 }
+            .help(model.isCollapsed ? "Expand" : "Collapse to artwork")
+            .padding(.trailing, model.isCollapsed ? PanelMetrics.edgeInset / 2 : 2)
+        }
+        // Collapsed, the whole square is the hover target, so the chevron
+        // appears whenever the pointer is anywhere over the panel.
+        .onHover { if model.isCollapsed { isHoveringChevron = $0 } }
     }
 
     @ViewBuilder
@@ -139,6 +195,7 @@ struct PanelView: View {
                     // room for it, so it never has to move.
                     volumeControl
                         .frame(width: PanelMetrics.volumeZoneWidth)
+                        .padding(.trailing, PanelMetrics.chevronLane)
                 }
 
                 // Transport sits directly above the scrub bar, centred, and
@@ -168,6 +225,7 @@ struct PanelView: View {
                 }
 
                 scrubBar
+                    .padding(.trailing, PanelMetrics.chevronLane)
             }
             // The optical nudge is applied HERE, to the text column, not to the
             // artwork. A Text view's box starts a little above its glyphs, so

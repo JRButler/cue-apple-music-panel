@@ -58,7 +58,7 @@ final class PanelController: NSObject, NSWindowDelegate {
 
         configure()
 
-        let hostingView = NSHostingView(rootView: PanelView(model: model))
+        let hostingView = NSHostingView(rootView: PanelView(model: model, onToggleCollapse: {}))
 
         // `sizingOptions = []` and an autoresizing mask, deliberately, rather
         // than the two mixed.
@@ -85,7 +85,13 @@ final class PanelController: NSObject, NSWindowDelegate {
         // content into that shorter box and cut the scrub bar in half at the
         // bottom edge. AppKit sizes the content view itself; leave it alone.
 
-        panel.setFrame(Self.restoredFrame(), display: false)
+        // The root view needs a callback into this controller, which cannot
+        // exist until after super.init — so it is attached here.
+        hostingView.rootView = PanelView(model: model) { [weak self] in
+            self?.toggleCollapsed()
+        }
+
+        panel.setFrame(Self.restoredFrame(collapsed: model.isCollapsed), display: false)
 
         // Must be set, and must be set here: `windowWillResize` is the only
         // thing holding the panel to one height per layout, and without a
@@ -194,11 +200,55 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// Horizontal resizing only, between the minimum and maximum widths. The
     /// height is fixed, so every resize comes back to the same number whichever
     /// edge or corner it was dragged from.
+    /// Collapsed, the panel is a fixed square and not resizable — the minimum
+    /// below would otherwise fight the collapse animation and snap it open.
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
-        NSSize(
+        if model.isCollapsed {
+            return NSSize(width: PanelMetrics.collapsedWidth, height: Self.contentHeight)
+        }
+        return NSSize(
             width: min(max(frameSize.width, Self.minWidth), Self.maxWidth),
             height: Self.contentHeight
         )
+    }
+
+    // MARK: - Collapse
+
+    private static let expandedWidthKey = "ExpandedPanelWidth"
+
+    /// Collapses to the artwork square, or restores the width it had before.
+    func toggleCollapsed() {
+        let collapsing = !model.isCollapsed
+
+        if collapsing {
+            UserDefaults.standard.set(Double(panel.frame.width), forKey: Self.expandedWidthKey)
+        }
+
+        let targetWidth = collapsing
+            ? PanelMetrics.collapsedWidth
+            : Self.restoredExpandedWidth()
+
+        // Flip the model first, or windowWillResize refuses the new width.
+        model.setCollapsed(collapsing)
+
+        var frame = panel.frame
+        // Grow and shrink from the left edge, so the panel's right-hand side —
+        // where the chevron is — stays put under the pointer.
+        frame.origin.x += frame.width - targetWidth
+        frame.size.width = targetWidth
+        frame = Self.clamped(frame)
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.22
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            panel.animator().setFrame(frame, display: true)
+        }
+    }
+
+    private static func restoredExpandedWidth() -> CGFloat {
+        let stored = UserDefaults.standard.double(forKey: expandedWidthKey)
+        guard stored > 0 else { return defaultSize.width }
+        return min(max(CGFloat(stored), minWidth), maxWidth)
     }
 
     // MARK: - Frame persistence (§4.1)
@@ -207,17 +257,25 @@ final class PanelController: NSObject, NSWindowDelegate {
     func windowDidResize(_ notification: Notification) { saveFrame() }
 
     private func saveFrame() {
+        // Collapsed the width is not the user's choice, so recording it would
+        // lose the expanded geometry we are meant to return to.
+        guard !model.isCollapsed else { return }
         UserDefaults.standard.set(NSStringFromRect(panel.frame), forKey: Self.frameKey)
     }
 
-    private static func restoredFrame() -> NSRect {
+    private static func restoredFrame(collapsed: Bool) -> NSRect {
         guard let stored = UserDefaults.standard.string(forKey: Self.frameKey) else {
-            return defaultFrame()
+            var frame = defaultFrame()
+            if collapsed { frame.size.width = PanelMetrics.collapsedWidth }
+            return frame
         }
         let frame = NSRectFromString(stored)
         guard frame.width > 0, frame.height > 0 else { return defaultFrame() }
         var result = clamped(frame)
         result.size.height = contentHeight
+        // A saved frame is always the expanded one; collapsing is restored
+        // from the flag rather than from the geometry.
+        if collapsed { result.size.width = PanelMetrics.collapsedWidth }
         return result
     }
 
@@ -255,7 +313,11 @@ final class PanelController: NSObject, NSWindowDelegate {
         var result = frame
         let widest = screens.map(\.width).max() ?? maxWidth
         let tallest = screens.map(\.height).max() ?? result.height
-        result.size.width = min(max(result.width, minWidth), min(maxWidth, widest))
+        // The collapsed square is a legitimate width below the minimum, so it
+        // is exempt — otherwise this would snap a collapsed panel open again.
+        if abs(result.width - PanelMetrics.collapsedWidth) > 0.5 {
+            result.size.width = min(max(result.width, minWidth), min(maxWidth, widest))
+        }
         result.size.height = min(result.height, tallest)
 
         // Step 2: if it is substantially visible on some screen, the position is

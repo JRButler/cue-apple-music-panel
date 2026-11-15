@@ -1061,6 +1061,31 @@ was scoped into M4, so it is gone rather than empty.
 
 ---
 
+## 6a. A note on editing this project
+
+Three features were reported as "not working" when they had simply never been
+added: §4.5's favourite star, `PanelController.toggleCollapsed`, and the
+collapse chevron. Each time the cause was the same.
+
+Edits are applied by scripts that match on surrounding source text, and the
+text they anchor to is most often a **comment** — which is exactly what gets
+rewritten as the code is explained better. When a match fails, the script
+either aborts before writing (discarding its earlier successful replacements
+too) or silently skips that one. The output still reads like success.
+
+**Compiling proves nothing here.** A SwiftUI view property that nothing
+references compiles perfectly happily; it just never renders. So after adding
+anything, check that it is *used*, not merely that it exists:
+
+```sh
+grep -n "FavouriteButton" Cue/UI/PanelView.swift     # is it in the body?
+```
+
+and build by exit status rather than by grepping the log, which was how a
+non-compiling tree got committed in 573f89c.
+
+---
+
 ## 7. Open questions
 
 ### 7.1 Polling and the main thread — needs a decision before M1

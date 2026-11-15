@@ -36,6 +36,11 @@ struct ArtworkView: View {
             if let image {
                 Image(nsImage: image)
                     .resizable()
+                    // The image is already close to its drawn size, so this is
+                    // a short hop rather than a 10x reduction — but ask for the
+                    // good filter anyway, it costs nothing at this scale.
+                    .interpolation(.high)
+                    .antialiased(true)
                     .aspectRatio(contentMode: .fill)
                     .transition(.opacity)
             }
