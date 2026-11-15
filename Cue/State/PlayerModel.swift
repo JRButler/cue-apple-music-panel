@@ -91,6 +91,12 @@ final class PlayerModel {
     private let artworkCache = ArtworkCache()
     /// Cancels an in-flight fetch when the track changes again first.
     private var artworkTask: Task<Void, Never>?
+
+    /// Failed artwork attempts for the current track. Bounded so a track Music
+    /// will never produce art for is not re-fetched forever, while one that is
+    /// merely still downloading gets a few chances.
+    private var artworkAttempts = 0
+    private static let artworkAttemptLimit = 4
     /// The track whose artwork is shown or being fetched. Compared against
     /// rather than against `track`, which the notification path updates
     /// optimistically and so cannot be used to detect a change.
@@ -339,7 +345,7 @@ final class PlayerModel {
     /// A cache hit paints immediately; a miss goes to Music once. Tracks with no
     /// artwork are cached as such, so the placeholder case does not re-ask on
     /// every track change back to the same song.
-    private func loadArtwork(for track: TrackInfo?) {
+    private func loadArtwork(for track: TrackInfo?, isRetry: Bool = false) {
         guard let track else {
             artworkTask?.cancel()
             artworkTask = nil
@@ -354,6 +360,8 @@ final class PlayerModel {
         artworkTask?.cancel()
         artworkTask = nil
         artworkKey = track.artworkKey
+        // A retry continues the same run of attempts; a new track starts over.
+        if !isRetry { artworkAttempts = 0 }
 
         if let cached = artworkCache.lookup(track.artworkKey) {
             artwork = cached
@@ -402,11 +410,33 @@ final class PlayerModel {
             } catch {
                 guard !Task.isCancelled else { return }
                 // An error is transient — Music busy, connection stale, timed
-                // out. Emphatically NOT evidence that the track has no artwork,
-                // so nothing is cached and the key is cleared so the next sync
-                // tries again.
+                // out, or the artwork not downloaded yet. Emphatically NOT
+                // evidence that the track has no artwork, so nothing is cached
+                // and the key is cleared so the next sync tries again.
+                artworkAttempts += 1
+                let reason = (error as? MusicBridgeError)?.localizedDescription ?? "\(error)"
+
+                if artworkAttempts >= Self.artworkAttemptLimit {
+                    // Tried enough times; stop asking and show the placeholder.
+                    artworkCache.store(nil, for: track.artworkKey)
+                    logger.notice("artwork gave up after \(self.artworkAttempts, privacy: .public) attempts: \(reason, privacy: .public)")
+                    return
+                }
+
                 artworkKey = nil
-                logger.notice("artwork fetch failed, will retry: \((error as? MusicBridgeError)?.localizedDescription ?? "\(error)", privacy: .public)")
+                logger.notice("artwork attempt \(self.artworkAttempts, privacy: .public) failed, will retry: \(reason, privacy: .public)")
+
+                // Retry under our own steam rather than waiting for the next
+                // notification, which may be a whole track away. Backs off a
+                // little each time, since the usual cause is artwork that has
+                // not finished downloading.
+                let attempt = artworkAttempts
+                artworkTask = Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(Double(attempt) * 0.8))
+                    guard !Task.isCancelled, let self else { return }
+                    guard self.track?.artworkKey == track.artworkKey else { return }
+                    self.loadArtwork(for: track, isRetry: true)
+                }
             }
         }
     }

@@ -729,6 +729,59 @@ final class M0Probe {
         printVerdict()
     }
 
+    /// Why does this track's artwork come back as 4 bytes?
+    ///
+    /// §4.3 chose `raw data` (pRaw) over `data` (pPCT) on the reasoning that
+    /// raw bytes decode directly. If a track answers `raw data` with a stub,
+    /// the other property, or the artwork's own metadata, may say why.
+    func runArtworkProbe() async {
+        heading("artwork — what does Music actually offer?")
+
+        guard controller.bridge.isMusicRunning else {
+            fail("Music is not running"); printVerdict(); return
+        }
+
+        let attempts: [(String, String)] = [
+            ("current track", """
+            tell application id "com.apple.Music" to return (name of current track)
+            """),
+            ("count of artworks", """
+            tell application id "com.apple.Music" to return (count of artworks of current track) as text
+            """),
+            ("artwork 1: downloaded?", """
+            tell application id "com.apple.Music" to return (downloaded of artwork 1 of current track) as text
+            """),
+            ("artwork 1: format", """
+            tell application id "com.apple.Music" to return (format of artwork 1 of current track) as text
+            """),
+            ("artwork 1: kind", """
+            tell application id "com.apple.Music" to return (kind of artwork 1 of current track) as text
+            """),
+            ("length of RAW DATA (pRaw)", """
+            tell application id "com.apple.Music" to return (length of (raw data of artwork 1 of current track)) as text
+            """),
+            ("length of DATA (pPCT)", """
+            tell application id "com.apple.Music" to return (length of (data of artwork 1 of current track)) as text
+            """),
+            ("track kind", """
+            tell application id "com.apple.Music" to return (kind of current track) as text
+            """),
+            ("track class", """
+            tell application id "com.apple.Music" to return (class of current track) as text
+            """),
+        ]
+
+        for (label, source) in attempts {
+            do {
+                let d = try controller.bridge.rawDescriptor(source: source)
+                pass("\(label) → \(d.stringValue ?? "\(d.int32Value)")")
+            } catch {
+                fail("\(label) → \((error as? MusicBridgeError)?.localizedDescription ?? "\(error)")")
+            }
+        }
+        printVerdict()
+    }
+
     // MARK: - Checks
 
     /// Verifies every row of §3.1's error table without provoking each condition.

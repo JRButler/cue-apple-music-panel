@@ -232,9 +232,23 @@ final class MusicBridge {
         )
     }
 
-    /// False for a `missing value` descriptor, which is not the same as absent.
+    /// False for a `missing value` descriptor.
+    ///
+    /// There are two spellings and only one was handled. A script that returns
+    /// `missing value` usually yields a descriptor of type `type` whose *code*
+    /// is `msng`, not a descriptor whose own type is `msng`. Testing only the
+    /// latter meant `missing value` read as present, and its four bytes —
+    /// literally `m`, `s`, `n`, `g` — were taken for image data. That is the
+    /// mysterious "4-byte artwork reply": it was never a warm-up stub, it was
+    /// `missing value` wearing a disguise.
     private static func isPresent(_ descriptor: NSAppleEventDescriptor) -> Bool {
-        AEKeyword(descriptor.descriptorType) != missingValueType
+        let type = AEKeyword(descriptor.descriptorType)
+        if type == missingValueType { return false }
+        if type == AEKeyword(fourChar: "type"),
+           AEKeyword(descriptor.typeCodeValue) == missingValueType {
+            return false
+        }
+        return true
     }
 
     private static func field(_ record: NSAppleEventDescriptor, _ key: AEKeyword) -> NSAppleEventDescriptor? {
@@ -298,16 +312,19 @@ final class MusicBridge {
         guard Self.isPresent(descriptor) else { return nil }
         let data = descriptor.data
 
-        // Music sometimes answers with a token payload rather than an image —
-        // a 4-byte reply was observed moments after it relaunched, while it was
-        // presumably still warming up. Nothing that small can be an image, and
-        // passing it on as artwork led to a failed decode being cached as
-        // "this track has no artwork". Treat it as absent.
+        // Music sometimes answers with a token payload rather than an image — a
+        // 4-byte reply turns up while it is warming up, or before streamed
+        // artwork has downloaded.
+        //
+        // This THROWS rather than returning nil, and the difference matters.
+        // `nil` means "this track genuinely has no artwork", which the model
+        // caches so as not to ask again. Returning nil here laundered a bad
+        // reply into a confident negative and the placeholder stuck for the
+        // rest of the session. A throw is transient: the model retries.
         guard data.count >= Self.minimumPlausibleArtworkBytes else {
-            if !data.isEmpty {
-                logger.notice("Discarding \(data.count, privacy: .public)-byte artwork reply as implausible")
-            }
-            return nil
+            throw MusicBridgeError.malformedResult(
+                "artwork reply was \(data.count) bytes, too small to be an image"
+            )
         }
         return data
     }

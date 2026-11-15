@@ -990,6 +990,43 @@ versus -600 (the process is gone).
 Each path now logs `trouble (<source>)` when it trips, because the previous
 round left no way to tell whether the guard or the tick had fired.
 
+#### 6.7 The "4-byte artwork" was `missing value` in disguise
+
+Reported as: artwork missing while a track played. The log said
+
+```
+Discarding 4-byte artwork reply as implausible
+artwork fetched in 49.6 ms (0 bytes)
+```
+
+and `--probe-artwork` found the track had `count of artworks → 0` and
+`class → URL track` — a streamed Apple Music track, which is precisely §4.3's
+documented placeholder case. The placeholder was right; how we reached it was
+not.
+
+**AppleScript returns `missing value` as a descriptor of type `type` whose
+*code* is `msng`, not as a descriptor whose own type is `msng`.** `isPresent`
+tested only the second spelling, so `missing value` read as present and its
+four bytes — `m`, `s`, `n`, `g` — were taken for image data. There was never a
+warm-up stub.
+
+This one check caused two separate reported bugs. The other was the hollow
+track record after an album finished (§6.5), patched at the symptom at the
+time; the root cause was here all along.
+
+It was also made worse by a fix of mine. The bridge had been "discarding
+implausible replies" by returning nil, and the model reads nil as *"this track
+genuinely has no artwork"* and caches it. A bad reply was therefore laundered
+into a confident negative, defeating the retry path added for undecodable
+data. The bridge now throws for an implausible reply, which the model treats
+as transient and retries up to four times with a backoff before settling on
+the placeholder — useful anyway for artwork that has not finished downloading.
+
+**The recurring shape, for the fourth time: two different states collapsed
+into one value.** -609 vs "quit"; a decode failure vs "no artwork"; an unsized
+track vs no track; an empty process lookup vs "not running". Each looked fine
+until something real hit the second case.
+
 ### M4 — AirPlay
 - Implement §4.7.
 
