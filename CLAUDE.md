@@ -589,7 +589,12 @@ Items, and Privacy & Security → Automation) and on the release page.
 
 ### Distribution — decided 2026-11-16
 
-Public GitHub repo, MIT licensed, with binaries attached to GitHub Releases.
+Public GitHub repo, MIT licensed, with binaries attached to GitHub Releases:
+<https://github.com/JRButler/cue-apple-music-panel>. The app is Cue; the repo
+carries the searchable name, because plenty of Mac apps are called Cue and
+none of them are findable.
+
+
 `README.md` is the user-facing document; **this file stays the internal spec.**
 Keep them apart: the README should never explain Apple Event descriptors, and
 this file should never apologise for a permission prompt.
@@ -1173,19 +1178,18 @@ until something real hit the second case.
 §4.7 was declined before this milestone began; see that section. Nothing else
 was scoped into M4, so it is gone rather than empty.
 
-### M4 — Polish (was M5) — in progress
+### M4 — Polish (was M5) — complete
 
-- §4.9 App chrome — **done**, trimmed to two toggles. §4.8 dropped; see §4.9.
-- Developer ID signing and notarisation — **done**. Submission
-  `3e50cee8-d797-4059-915c-2be56927bde4` was Accepted on 2026-11-16, stapled,
-  and the resulting 320 KB `build/Cue.zip` was verified from a directory outside
-  the build tree: `source=Notarized Developer ID`. See §5b.
-- Public release groundwork — `README.md`, `LICENSE` (MIT), the app icon and
-  §5b's distribution decisions are in, and the version is 1.0. Outstanding:
-  a screenshot for the README.
+- §4.9 App chrome — trimmed to two toggles. §4.8 dropped; see §4.9.
+- Developer ID signing and notarisation — the pipeline is §5b.
+- A reel-to-reel app icon — see §5b.
+- **Cue 1.0 released**, 2026-11-16:
+  <https://github.com/JRButler/cue-apple-music-panel/releases/tag/v1.0>
 
-Acceptance: a notarised zip that passes `spctl` on a machine other than this
-one, and a Launch at Login tick verified from `/Applications`.
+Acceptance met. Launch at Login and the Automation prompt were both confirmed
+from a copy installed in `/Applications`, and the published `Cue.zip` was
+downloaded back from GitHub into an empty directory, where `spctl` reported
+`source=Notarized Developer ID` and `stapler validate` passed.
 
 ---
 
