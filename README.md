@@ -7,19 +7,7 @@ the window. Cue puts them back, in a small window that floats above whatever
 you're working on: a scrub bar wide enough to land on the right second, track
 info you can read, and transport buttons you don't have to aim at.
 
-<!-- TODO: add docs/screenshot.png and uncomment
-![Cue](docs/screenshot.png)
--->
-
-```
-┌─────────────────────────────────────────────────────────┐
-│  ┌─────────┐  Title                  🔈 ━━━━━━━━━━ 🔊    │
-│  │         │  Artist — Album                             │
-│  │   art   │       ⇄   ⏮    ⏯    ⏭   ↻                   │
-│  │         │  1:42 ━━━━━━━━●───────────────   -2:13      │
-│  └─────────┘                                             │
-└─────────────────────────────────────────────────────────┘
-```
+![Cue, floating above the desktop](docs/screenshot.png)
 
 Cue doesn't play anything itself. It drives the Music app, so your library,
 subscription, downloads and AirPlay routing all keep working exactly as they do
@@ -67,6 +55,11 @@ Cue**.
 | **Volume** | This is *Music's* volume, not your system volume. Scroll over the slider for fine adjustment; the left speaker icon mutes and unmutes. |
 | **Favourite** | The star, at wider panel sizes. |
 | **Shuffle and repeat** | Either side of the transport buttons. Repeat cycles off → all → one. |
+
+<img src="docs/screenshot-collapsed.png" width="249" alt="Cue collapsed to its album art">
+
+Collapsed, Cue is just the artwork — about the size of a Finder icon, and
+still showing you what's playing.
 
 The panel never takes keyboard focus. Click a button on it and your keystrokes
 still go to whatever you were typing in.
