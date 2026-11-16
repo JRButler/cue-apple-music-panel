@@ -25,6 +25,7 @@ A floating, always-available control panel for Apple Music on macOS. It replaces
 ## 2. Platform and stack
 
 - macOS 27 deployment target, Apple Silicon. The dev machine is a Mac Studio (M1).
+  The floor is a product decision, not an API constraint — see §5b before lowering it.
 - Swift 6 (strict concurrency), SwiftUI for views, and AppKit for the window (`NSPanel`) and the status item.
 - Xcode project, with no third-party dependencies.
 - An agent app (`LSUIElement = YES`): no Dock icon. A menu-bar status item provides show/hide, settings, and quit.
@@ -438,10 +439,26 @@ naturally onto multi-select. §4.9's menu is the natural host.
 ### 4.8 Escape hatches ⏳ proposed
 - "Lyrics" and "Up Next" buttons that bring Music.app forward. No UI scripting.
 
-### 4.9 App chrome ⏳ proposed
-- Status item menu: Show/Hide Panel, Always on Top (toggle), Launch at Login (`SMAppService.mainApp`), Settings…, Quit.
-- Optional global hotkey to toggle the panel.
-- Setting: hide the panel automatically when Music isn't running.
+### 4.9 App chrome ✅ confirmed — trimmed on build
+
+Shipped as: Show/Hide Panel, Always on Top (toggle), Launch at Login
+(`SMAppService.mainApp`), Quit. The ticks are read fresh in `menuNeedsUpdate`
+rather than cached, because `SMAppService.mainApp.status` is the only true
+account of the login item — a user can remove it in System Settings and our
+stored flag would never know.
+
+Three proposed items were **dropped as scope** rather than deferred:
+
+- A Settings window. Two toggles do not need one.
+- A global hotkey. §7.3 already settled that a global key grab conflicts with
+  §4.1's focus contract, and the panel is always visible anyway.
+- Auto-hiding when Music isn't running, plus §4.8's escape hatches. §5's
+  placeholder states already cover Music being closed, and hiding the window
+  out from under someone is worse than showing them a button.
+
+Note that Launch at Login cannot be tested from a debug build in the build
+tree: `SMAppService` registers the bundle by path, so it must be verified from
+`/Applications` after §5b's pipeline has run.
 
 ---
 
@@ -498,6 +515,78 @@ Logs: `~/Library/Logs/Cue/m0-debug.log` (every event) and
 
 No Swift file hard-codes the name; code reads `Bundle.main` instead. Note that
 changing the bundle id resets the Automation grant, so the prompt returns once.
+
+---
+
+## 5b. Shipping
+
+`tools/sign-and-notarise.sh` takes the tree to a notarised, stapled zip:
+archive → export (`tools/ExportOptions.plist`) → verify → zip → submit →
+staple → **re-zip**. That last step is not redundant: stapling writes the
+ticket into the `.app`, so a zip made before it ships unstapled.
+
+Adapted from ScreenRecorderPlus's script of the same name, and its checks are
+kept rather than rewritten — each exists because something went wrong once.
+Two gates are Cue-specific:
+
+- `LSUIElement == true`, because losing it turns the agent into a Dock app and
+  nothing else complains
+- the `com.apple.security.automation.apple-events` entitlement, without which
+  the app ships unable to do the only thing it does
+
+It also refuses to ship a version that is already tagged, so two different
+builds cannot wear the same version number.
+
+Prerequisites are **per machine, not per project**: a Developer ID Application
+certificate in the login keychain, and a stored `notarytool` credential
+profile. The profile is an Apple ID credential, so one notarises every app —
+hence `CUE_NOTARY_PROFILE` defaulting to an existing profile name rather than a
+duplicate under a new one.
+
+**Notarisation returns 403 — "a required agreement is missing or has expired"
+— until the Apple Developer Program License Agreement is accepted.** There is
+no CLI for accepting it and no separate way to query it: the 403 *is* the status
+check, and `xcrun notarytool history --keychain-profile <profile>` succeeding is
+the confirmation. Apple updates the agreement periodically, so this recurs.
+Accepting it does not take effect instantly — it kept returning 403 for a few
+minutes afterwards, so re-test before assuming the wrong agreement was signed.
+
+**Verify the zip, not the build-tree app.** Stapling writes the ticket into the
+`.app`, so unpacking `build/Cue.zip` somewhere else and running `spctl` there is
+the only check that proves the re-zip happened. It should report
+`source=Notarized Developer ID`; a bundle whose ticket never made it into the
+zip says `source=Developer ID` instead, and that difference is the whole point
+of the step.
+
+### Distribution — decided 2026-11-16
+
+Public GitHub repo, MIT licensed, with binaries attached to GitHub Releases.
+`README.md` is the user-facing document; **this file stays the internal spec.**
+Keep them apart: the README should never explain Apple Event descriptors, and
+this file should never apologise for a permission prompt.
+
+- **The macOS 27 floor stays, for a product reason rather than a technical
+  one.** The APIs in use go back much further — `onGeometryChange` is the
+  highest at macOS 15, then `@Observable` at 14 and `SMAppService` at 13 — so
+  lowering the target is one build setting. It stays at 27 because macOS 27 is
+  the release whose Music redesign created the need; before it, Music's own
+  controls were adequate and nobody wanted this. Do not "fix" it.
+  Lowering it would also mean supporting a Music dictionary never tested here:
+  §6.1's `favorited` is version-specific, and older Music used `loved`.
+- **No Sparkle before release.** Users download and replace the app. Revisit if
+  the project keeps moving — the same call is pending for ScreenRecorderPlus.
+- **The name is still open (§7.2) and must be settled before the first
+  release**, because it then lives in a URL and in other people's menu bars.
+  §5a lists every place it appears.
+
+### Release checklist
+
+1. Settle the version. `MARKETING_VERSION` is 1.0 in both configurations;
+   bump it, and `CURRENT_PROJECT_VERSION`, for each release.
+2. `tools/sign-and-notarise.sh --dry-run`, then without the flag.
+3. Verify the stapled app from outside the build tree: `spctl -a -vvv -t install`
+   and `xcrun stapler validate`.
+4. Tag `v<version>`, push, create the release, attach `build/Cue.zip`.
 
 ---
 
@@ -1055,9 +1144,19 @@ until something real hit the second case.
 §4.7 was declined before this milestone began; see that section. Nothing else
 was scoped into M4, so it is gone rather than empty.
 
-### M4 — Polish (was M5)
-- Implement §4.8 and §4.9.
-- Add Developer ID signing and notarisation.
+### M4 — Polish (was M5) — in progress
+
+- §4.9 App chrome — **done**, trimmed to two toggles. §4.8 dropped; see §4.9.
+- Developer ID signing and notarisation — **done**. Submission
+  `3e50cee8-d797-4059-915c-2be56927bde4` was Accepted on 2026-11-16, stapled,
+  and the resulting 320 KB `build/Cue.zip` was verified from a directory outside
+  the build tree: `source=Notarized Developer ID`. See §5b.
+- Public release groundwork — `README.md`, `LICENSE` (MIT), the app icon and
+  §5b's distribution decisions are in, and the version is 1.0. Outstanding:
+  a screenshot for the README.
+
+Acceptance: a notarised zip that passes `spctl` on a machine other than this
+one, and a Launch at Login tick verified from `/Applications`.
 
 ---
 
@@ -1166,6 +1265,15 @@ if the 2 Hz stepping is visibly annoying in use — judge it by eye first.
 
 ### 7.2 Product questions
 
-- Final name. "Cue" is a working title; §5a lists everywhere it appears.
+- ~~Final name~~ — **settled: Cue.** Plenty of other Mac apps are called Cue,
+  but with nothing being sold the exposure is negligible, and a crowded
+  common-word namespace weakens anyone's exclusive claim to it. The real cost
+  was discoverability, and that is solved at the repository instead: the app
+  is Cue, the repo is `cue-apple-music-panel`. §5a still lists everywhere the
+  name appears, should that ever change.
 - Visual direction: minimal glass, or something with more character?
 - Should we ever support non-Music players via MediaRemote? This is out of scope unless decided otherwise.
+
+Decided in §5b rather than here: the macOS 27 floor stays, distribution is a
+public MIT repo with binaries on GitHub Releases, and Sparkle waits until after
+release.
