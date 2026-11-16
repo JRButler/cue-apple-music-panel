@@ -558,6 +558,35 @@ the only check that proves the re-zip happened. It should report
 zip says `source=Developer ID` instead, and that difference is the whole point
 of the step.
 
+### The app icon
+
+A reel-to-reel tape reel. `tools/icon-master.png` is the 1024×1024 master;
+`swift tools/make-icon.swift` composites it into
+`Cue/Assets.xcassets/AppIcon.appiconset`, drawing each size at its own
+resolution and masking it to the macOS icon shape.
+
+The target uses `fileSystemSynchronizedGroups`, so the asset catalog needed no
+project-file surgery — only `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon` in
+both configurations. Verify by looking for `AppIcon.icns` and `Assets.car` in
+the built `Contents/Resources/`, plus `CFBundleIconName` in the Info.plist;
+a missing asset catalog fails silently and simply ships a blank app.
+
+Two things worth knowing before changing it:
+
+- **Small sizes need their own proportions, not the same drawing scaled.** The
+  generator's `shape(for:)` gives 16 and 32 px a smaller canvas inset so the
+  artwork itself is drawn larger. Even so, the photographic master reads as a
+  blue tile with an orange centre at 16 px — accepted knowingly. A flat second
+  master for the small end is the fix if it ever matters; `shape(for:)` is
+  where it would branch.
+- **The icon is now most of the app.** `Assets.car` is 1.96 MB against a
+  binary of a couple of hundred KB, which took the download from 320 KB to
+  2.3 MB. Harmless, but it means a change to the master moves the release size
+  far more than a change to the code does.
+
+Cue has no Dock icon, so the icon is seen in Finder, in System Settings (Login
+Items, and Privacy & Security → Automation) and on the release page.
+
 ### Distribution — decided 2026-11-16
 
 Public GitHub repo, MIT licensed, with binaries attached to GitHub Releases.
