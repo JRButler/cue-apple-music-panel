@@ -139,3 +139,57 @@ try! json("""
 """).write(to: catalog.appendingPathComponent("Contents.json"))
 
 print("\nWrote \(entries.count) sizes to \(iconSet.path)")
+
+// --- §4.3's artwork placeholder ------------------------------------------
+//
+// The same reel, full-bleed. ArtworkView clips it to its own rounded corners
+// and draws its own border, so this must carry neither the icon's squircle nor
+// its inset: it stands in for album art, not for an app icon in a box.
+
+func drawPlaceholder(size: CGFloat) -> CGImage {
+    let ctx = CGContext(data: nil,
+                        width: Int(size), height: Int(size),
+                        bitsPerComponent: 8, bytesPerRow: 0,
+                        space: CGColorSpaceCreateDeviceRGB(),
+                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    ctx.interpolationQuality = .high
+    ctx.draw(master, in: CGRect(x: 0, y: 0, width: size, height: size))
+    return ctx.makeImage()!
+}
+
+let placeholderSet = catalog.appendingPathComponent("ArtworkPlaceholder.imageset")
+try! FileManager.default.createDirectory(at: placeholderSet, withIntermediateDirectories: true)
+
+// ArtworkView draws at most 132 pt, so 2x needs 264. 512 leaves headroom
+// without carrying the whole 1024 master into the bundle.
+for (name, px) in [("placeholder.png", 256.0), ("placeholder@2x.png", 512.0)] {
+    let url = placeholderSet.appendingPathComponent(name)
+    let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil)!
+    CGImageDestinationAddImage(dest, drawPlaceholder(size: px), nil)
+    guard CGImageDestinationFinalize(dest) else { fatalError("could not write \(name)") }
+    print("  \(name)  \(Int(px))px")
+}
+
+try! json("""
+{
+  "images" : [
+    {
+      "filename" : "placeholder.png",
+      "idiom" : "universal",
+      "scale" : "1x"
+    },
+    {
+      "filename" : "placeholder@2x.png",
+      "idiom" : "universal",
+      "scale" : "2x"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
+""").write(to: placeholderSet.appendingPathComponent("Contents.json"))
+
+print("Wrote the artwork placeholder to \(placeholderSet.path)")
+

@@ -1173,6 +1173,71 @@ into one value.** -609 vs "quit"; a decode failure vs "no artwork"; an unsized
 track vs no track; an empty process lookup vs "not running". Each looked fine
 until something real hit the second case.
 
+#### 6.8 Field report: the artwork reverted to the placeholder while paused
+
+Reported after 1.0 shipped: with Music paused, the artwork went blank and
+stayed blank. The log, once it could be read at all:
+
+```
+16:01:38  artwork cache hit for Tough Leap…
+16:01:57  trouble (resync): failed("Music didn't answer in time.")
+16:02:05  connection: connected -> failed
+16:02:32  trouble cleared; connected
+16:02:32  recovery: stopped, connected
+16:15:30  artwork cache hit for Tough Leap…
+```
+
+**Three things this cost, all worth not repeating.**
+
+**`log` is a zsh builtin.** `log show --predicate …` silently runs the shell's
+own `log` and reports "too many arguments". It looks exactly like an app that
+never logged, and it nearly produced a day of work on logging that was fine all
+along. Use `/usr/bin/log` from a script, always.
+
+**`recovery: stopped, connected` is `stopRecovery()`, not a stopped player.**
+Read as the latter it supports a confident, wrong diagnosis. A log line naming
+a state transition should say which machine it belongs to.
+
+**§6.4's lesson had only been applied to the connection.** Connection
+transitions were logged; the track's were not. So the one fact needed — whether
+the track had gone — was the one fact absent, and two wrong diagnoses were
+offered before the user's own account settled it. `apply` now logs
+`track: <old> -> <new>, player <state>` on every change.
+
+**What it actually was**, by elimination rather than by guessing. Exactly three
+paths clear `artworkKey`, and two of them log:
+
+| path | logs | present |
+|---|---|---|
+| decode failure | `artwork failed to decode` | no |
+| transient error | `artwork attempt N failed` | no |
+| the track became nil | nothing, at the time | — |
+
+So a *successful* sync returned no current track while Music was merely paused.
+Music keeps `current track` across a pause — verified directly, and its UI has
+no Stop at all — so that read was hollow: the `missing value` family again
+(§6.7), in its third disguise.
+
+**The asymmetry is the bug.** `reportProblem` refuses to believe bad news about
+the connection for 1.5 s. `apply` believed bad news about the track instantly,
+and one hollow read emptied the panel. It now takes two consecutive track-less
+reads, which costs one poll on a genuine end-of-queue and nothing otherwise.
+A held read's missing position is ignored too, or the scrub bar snaps to zero
+on a track still paused halfway through.
+
+**A second, unrelated bug found while looking for this one.** The artwork
+give-up branch called `artworkCache.store(nil, …)` after four failures — and
+`nil` there means "asked, and this track genuinely has no artwork". A run of
+timeouts is not that, and the lie stuck until the LRU evicted it twenty songs
+later. It now caches nothing and retries when the connection recovers. Note
+this had never actually fired: the logs show no give-up all day. It was found
+by reading, not by reproducing.
+
+**And the placeholder itself changed.** §5's stopped state shows it far more
+often than the rare artwork-less track does, and a grey box with a glyph reads
+as something broken. It is now Cue's own reel, desaturated so it is not taken
+for an album cover — the user's suggestion, and the right one.
+
 ### ~~M4 — AirPlay~~ — dropped
 
 §4.7 was declined before this milestone began; see that section. Nothing else

@@ -72,13 +72,19 @@ struct ArtworkView: View {
         .accessibilityLabel(image == nil ? "No artwork" : "Album artwork")
     }
 
+    /// Shown whenever there is no album art: a track that carries none, and —
+    /// far more often — a stopped player, where §5 says there is nothing to
+    /// show. A grey box with a glyph read as something broken; Cue's own reel
+    /// reads as "nothing playing".
+    ///
+    /// Desaturated a little so it is not mistaken for an album cover that
+    /// happens to be a tape reel. One number, if that judgement changes.
     private var placeholder: some View {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(.quaternary)
-            .overlay(
-                Image(systemName: "music.note")
-                    .font(.system(size: size * 0.3, weight: .light))
-                    .foregroundStyle(.tertiary)
-            )
+        Image(.artworkPlaceholder)
+            .resizable()
+            .interpolation(.high)
+            .aspectRatio(contentMode: .fill)
+            .saturation(0.75)
+            .opacity(0.9)
     }
 }

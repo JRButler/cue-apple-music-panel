@@ -129,10 +129,23 @@ final class PlayerModel {
     /// merely still downloading gets a few chances.
     private var artworkAttempts = 0
     private static let artworkAttemptLimit = 4
+
+    /// How many consecutive track-less syncs it takes to believe the track has
+    /// really gone. Two, so one hollow read cannot clear the panel.
+    private static let tracklessReadsBeforeClearing = 2
     /// The track whose artwork is shown or being fetched. Compared against
     /// rather than against `track`, which the notification path updates
     /// optimistically and so cannot be used to detect a change.
     private var artworkKey: String?
+
+    /// The track whose artwork we stopped retrying after a run of transient
+    /// failures. Not the same as "this track has no artwork", which lives in
+    /// the cache — see the give-up branch in `loadArtwork`.
+    private var artworkGaveUp: String?
+
+    /// Consecutive syncs that came back with no current track while one was
+    /// showing. See `apply`: one is not believed, two are.
+    private var tracklessReads = 0
     /// The track the clock was last anchored for. Same reasoning as
     /// `artworkKey`: comparing against `track` cannot detect a change the
     /// notification path has already applied.
@@ -260,11 +273,25 @@ final class PlayerModel {
 
     /// Clears any run of failures and marks us healthy.
     private func reportHealthy() {
-        if troubleSince != nil {
+        let wasTroubled = troubleSince != nil
+        if wasTroubled {
             logger.notice("trouble cleared")
         }
         troubleSince = nil
         connection = .connected
+
+        // Artwork that gave up during the trouble is worth one more try now
+        // that Music is answering. Gated on having actually been in trouble:
+        // this runs on every successful sync, and retrying unconditionally
+        // would re-fetch on each one for as long as the artwork kept failing.
+        if wasTroubled, let key = artworkGaveUp {
+            artworkGaveUp = nil
+            if artworkKey == key {
+                artworkKey = nil
+                logger.notice("artwork retrying after recovery: \(key, privacy: .public)")
+                loadArtwork(for: track)
+            }
+        }
     }
 
     // MARK: - Recovery
@@ -329,11 +356,46 @@ final class PlayerModel {
     }
 
     private func apply(_ state: MusicState) {
+        var state = state
+
+        // A single read saying "no current track" is not believed.
+        //
+        // Music keeps `current track` across a pause — there is no Stop in its
+        // UI, so a paused player always has one. A track-less read while a
+        // track is showing is therefore a hollow record, the same
+        // `missing value` family as §6.7, and taking it at face value cleared
+        // the artwork to §4.3's placeholder for thirteen minutes while Music
+        // sat paused on the very track it had just reported.
+        //
+        // `connection` already refuses to believe bad news for 1.5 s
+        // (`reportProblem`); the track believed it instantly. Now it wants two
+        // consecutive reads to agree, which costs one poll — under a second —
+        // on a genuine end-of-queue, and nothing otherwise.
+        var heldTrack = false
+        if state.track == nil, let known = track {
+            tracklessReads += 1
+            if tracklessReads < Self.tracklessReadsBeforeClearing {
+                state.track = known
+                heldTrack = true
+                logger.notice("track-less read \(self.tracklessReads, privacy: .public) while \(String(describing: state.playerState), privacy: .public) — holding \(known.id, privacy: .public)")
+            } else {
+                logger.notice("track cleared after \(self.tracklessReads, privacy: .public) consecutive track-less reads, player \(String(describing: state.playerState), privacy: .public)")
+            }
+        } else {
+            tracklessReads = 0
+        }
+
         // Keyed against what was last applied, not against `track`: the
         // notification path sets `track` optimistically, so comparing with it
         // always reports "unchanged". Same trap that stopped the artwork
         // loading.
         let trackChanged = state.track?.id != appliedTrackKey
+        if trackChanged {
+            // §6.4's lesson, applied to the track: a stopped player clears the
+            // artwork to §5's placeholder, and without this line that is
+            // indistinguishable in the log from artwork having failed.
+            logger.notice("track: \(self.appliedTrackKey ?? "none", privacy: .public) -> \(state.track?.id ?? "none", privacy: .public), player \(String(describing: state.playerState), privacy: .public)")
+        }
         appliedTrackKey = state.track?.id
 
         playerState = state.playerState
@@ -356,9 +418,12 @@ final class PlayerModel {
             } else {
                 clock.sync(position: position, isAdvancing: state.playerState.isAdvancing)
             }
-        } else {
+        } else if !heldTrack {
             clock.setAdvancing(false, position: 0)
         }
+        // A held track's read had no position either; resetting the clock to
+        // zero would snap the scrub bar to the start of a track still paused
+        // mid-way through.
 
         // Unconditional: `loadArtwork` decides for itself whether this is a
         // track it has already fetched. Gating here on a comparison against
@@ -453,9 +518,18 @@ final class PlayerModel {
                 let reason = (error as? MusicBridgeError)?.localizedDescription ?? "\(error)"
 
                 if artworkAttempts >= Self.artworkAttemptLimit {
-                    // Tried enough times; stop asking and show the placeholder.
-                    artworkCache.store(nil, for: track.artworkKey)
-                    logger.notice("artwork gave up after \(self.artworkAttempts, privacy: .public) attempts: \(reason, privacy: .public)")
+                    // Stop asking — but do NOT cache the failure. `store(nil)`
+                    // means "asked, and this track genuinely has no artwork"
+                    // (ArtworkCache), and a run of timeouts is not that. Caching
+                    // it here made the placeholder permanent for the track until
+                    // the LRU evicted it twenty songs later, which is the same
+                    // mistake the decode path above was fixed for.
+                    //
+                    // Leaving `artworkKey` set is what ends the burst. Recovering
+                    // from trouble clears `artworkGaveUp` and tries once more, and
+                    // a track change clears it anyway.
+                    artworkGaveUp = track.artworkKey
+                    logger.notice("artwork gave up after \(self.artworkAttempts, privacy: .public) attempts: \(reason, privacy: .public) — nothing cached, will retry on recovery")
                     return
                 }
 
