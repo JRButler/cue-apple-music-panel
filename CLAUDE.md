@@ -1250,6 +1250,8 @@ was scoped into M4, so it is gone rather than empty.
 - A reel-to-reel app icon — see §5b.
 - **Cue 1.0 released**, 2026-11-16:
   <https://github.com/JRButler/cue-apple-music-panel/releases/tag/v1.0>
+- **1.0.1**, 2026-11-17: §6.8's fixes, after a day of real use on the debug
+  build. <https://github.com/JRButler/cue-apple-music-panel/releases/tag/v1.0.1>
 
 Acceptance met. Launch at Login and the Automation prompt were both confirmed
 from a copy installed in `/Applications`, and the published `Cue.zip` was
