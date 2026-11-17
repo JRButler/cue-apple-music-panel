@@ -92,7 +92,16 @@ signature makes the permission prompt come back on every build).
 xcodebuild -project Cue.xcodeproj -scheme Cue -configuration Release build
 ```
 
-To produce a notarised zip, with a stored `notarytool` credential profile:
+To produce a notarised zip you need a stored `notarytool` credential profile.
+It holds an Apple ID credential rather than anything project-specific, so one
+you already have for another app will do. Name it once:
+
+```sh
+cp tools/local.env.example tools/local.env   # then edit, it is gitignored
+./tools/sign-and-notarise.sh
+```
+
+or per run:
 
 ```sh
 CUE_NOTARY_PROFILE=YourProfileName ./tools/sign-and-notarise.sh

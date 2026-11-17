@@ -15,3 +15,6 @@ build/dist/
 
 # macOS
 .DS_Store
+
+# Per-machine signing settings (the notarytool profile name)
+tools/local.env

@@ -14,9 +14,14 @@
 #
 # Prerequisites, both one-off and PER-MACHINE rather than per-project:
 #   1. A "Developer ID Application" certificate in the login keychain.
-#   2. A stored notarytool credential profile. It is a stored Apple ID
-#      credential, so the same one notarises every app — hence the default
-#      below rather than a duplicate under a new name.
+#   2. A stored notarytool credential profile, created once with
+#      `xcrun notarytool store-credentials`. It holds an Apple ID credential
+#      rather than anything project-specific, so a profile stored for another
+#      app notarises this one perfectly well.
+#
+#      The profile name therefore differs per machine and does not belong in a
+#      public repo. Name yours in tools/local.env (gitignored; see
+#      tools/local.env.example), or pass it per run:
 #
 #   CUE_NOTARY_PROFILE=SomeOtherName ./tools/sign-and-notarise.sh
 #
@@ -29,7 +34,12 @@ ARCHIVE="build/${SCHEME}.xcarchive"
 DIST_DIR="build/dist"
 APP_PATH="${DIST_DIR}/${SCHEME}.app"
 ZIP_PATH="build/${SCHEME}.zip"
-NOTARY_PROFILE="${CUE_NOTARY_PROFILE:-VectorAsteroids}"
+# Per-machine settings, kept out of the repo. The only one so far is which
+# stored notarytool profile to use.
+# shellcheck source=/dev/null
+[ -f tools/local.env ] && . tools/local.env
+
+NOTARY_PROFILE="${CUE_NOTARY_PROFILE:-Cue}"
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
 

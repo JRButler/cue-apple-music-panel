@@ -540,8 +540,11 @@ builds cannot wear the same version number.
 Prerequisites are **per machine, not per project**: a Developer ID Application
 certificate in the login keychain, and a stored `notarytool` credential
 profile. The profile is an Apple ID credential, so one notarises every app —
-hence `CUE_NOTARY_PROFILE` defaulting to an existing profile name rather than a
-duplicate under a new one.
+so the name differs per machine and has no business in a public repo. The
+script reads it from `tools/local.env`, which is gitignored, falling back to
+`Cue`; `tools/local.env.example` documents the mechanism. It previously
+defaulted to the name of another of Julian's projects, which worked perfectly
+and read as a puzzle to anyone else.
 
 **Notarisation returns 403 — "a required agreement is missing or has expired"
 — until the Apple Developer Program License Agreement is accepted.** There is
