@@ -28,17 +28,17 @@ struct TransportControls: View {
     let onNext: () -> Void
 
     /// §4.4's minimum hit targets.
-    private let sideTarget: CGFloat = 34
+    private var sideTarget: CGFloat { PanelMetrics.transportSideTarget }
     /// §4.4's floor exactly. The glyph inside is 27 pt, so this stays a
     /// comfortable target while costing the panel as little height as the
     /// spec permits.
-    private let centreTarget: CGFloat = 44
+    private var centreTarget: CGFloat { PanelMetrics.transportCentreTarget }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: PanelMetrics.transportSpacing) {
             TransportButton(
                 symbol: "backward.fill",
-                glyphSize: 19,
+                glyphSize: PanelMetrics.transportSideGlyph,
                 target: sideTarget,
                 help: "Previous",
                 action: onPrevious
@@ -48,7 +48,7 @@ struct TransportControls: View {
                 // §4.4: reflects the actual player state, updated optimistically
                 // on click and reconciled on the next sync.
                 symbol: isPlaying ? "pause.fill" : "play.fill",
-                glyphSize: 27,
+                glyphSize: PanelMetrics.transportCentreGlyph,
                 target: centreTarget,
                 help: isPlaying ? "Pause" : "Play",
                 action: onPlayPause
@@ -56,7 +56,7 @@ struct TransportControls: View {
 
             TransportButton(
                 symbol: "forward.fill",
-                glyphSize: 19,
+                glyphSize: PanelMetrics.transportSideGlyph,
                 target: sideTarget,
                 help: "Next",
                 action: onNext

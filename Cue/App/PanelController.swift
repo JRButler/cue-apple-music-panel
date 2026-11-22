@@ -242,6 +242,52 @@ final class PanelController: NSObject, NSWindowDelegate {
         logger.notice("always on top: \(onTop, privacy: .public)")
     }
 
+    // MARK: - Size (§4.9a)
+
+    /// Applies a new overall scale and resizes the window to match.
+    ///
+    /// The height is derived from `PanelMetrics`, so an existing window will
+    /// not pick up a new scale on its own — `windowWillResize` only clamps
+    /// resizes the user starts. This is what makes the change take effect.
+    ///
+    /// The width scales in proportion rather than snapping to a default, so a
+    /// panel the user widened stays proportionally wide, then is clamped to
+    /// the new minimum.
+    func setSize(_ size: PanelSize) {
+        guard size != PanelMetrics.size else { return }
+        let ratio = size.scale / PanelMetrics.scale
+        PanelMetrics.size = size
+        // Statics are invisible to @Observable; this is what redraws the panel.
+        model.panelSize = size
+
+        // The stored expanded width is in the old scale, so a panel collapsed
+        // across a size change would otherwise expand to the wrong width.
+        let storedExpanded = UserDefaults.standard.double(forKey: Self.expandedWidthKey)
+        if storedExpanded > 0 {
+            UserDefaults.standard.set(Double(storedExpanded) * Double(ratio),
+                                      forKey: Self.expandedWidthKey)
+        }
+
+        let height = Self.contentHeight
+        panel.minSize = NSSize(width: Self.minWidth, height: height)
+        panel.maxSize = NSSize(width: Self.maxWidth, height: height)
+
+        var frame = panel.frame
+        let width = model.isCollapsed
+            ? PanelMetrics.collapsedWidth
+            : min(max(frame.width * ratio, Self.minWidth), Self.maxWidth)
+
+        // Hold the top-left corner still. The panel is usually parked against
+        // an edge of the screen, and growing downward from where it sits is
+        // what someone who put it there expects.
+        frame.origin.y += frame.height - height
+        frame.size = NSSize(width: width, height: height)
+        panel.setFrame(frame, display: true, animate: false)
+
+        saveFrame()
+        logger.notice("panel size: \(size.rawValue, privacy: .public), \(Int(width), privacy: .public)x\(Int(height), privacy: .public)")
+    }
+
     // MARK: - Collapse
 
     private static let expandedWidthKey = "ExpandedPanelWidth"

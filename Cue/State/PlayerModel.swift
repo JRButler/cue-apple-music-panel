@@ -86,6 +86,12 @@ final class PlayerModel {
     /// nothing at all until it is expanded or a notification arrives.
     private(set) var isCollapsed: Bool = UserDefaults.standard.bool(forKey: "PanelCollapsed")
 
+    /// §4.9a. Mirrors `PanelMetrics.size` purely so SwiftUI has something to
+    /// observe: the metrics are plain statics, and `@Observable` cannot see a
+    /// static change, so nothing would invalidate the views that read type and
+    /// glyph sizes from them. `PanelController.setSize` sets both.
+    var panelSize: PanelSize = PanelMetrics.size
+
     /// Width the content should lay itself out at, overriding the window's.
     ///
     /// Set for the duration of the collapse animation so the controls are

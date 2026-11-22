@@ -50,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             togglePanel: { panel.toggle() },
             isAlwaysOnTop: { panel.isAlwaysOnTop },
             setAlwaysOnTop: { panel.setAlwaysOnTop($0) },
+            setPanelSize: { panel.setSize($0) },
             quit: { NSApp.terminate(nil) }
         )
 

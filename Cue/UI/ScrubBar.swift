@@ -107,7 +107,7 @@ struct ScrubBar: View {
             // An explicit size rather than `.caption`, which is around 10 pt
             // and reads small beside the enlarged transport glyphs. 13 pt still
             // sits inside the 24 pt row, so the panel height is unchanged.
-            .font(.system(size: 13, weight: .medium, design: .rounded))
+            .font(.system(size: PanelMetrics.timeFont, weight: .medium, design: .rounded))
             .monospacedDigit()
             .foregroundStyle(.secondary)
             .frame(minWidth: 44, alignment: .leading)
@@ -120,7 +120,7 @@ struct ScrubBar: View {
             model?.showsTotalTime.toggle()
         } label: {
             Text(trailingText)
-                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .font(.system(size: PanelMetrics.timeFont, weight: .medium, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 50, alignment: .trailing)

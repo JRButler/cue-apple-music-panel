@@ -46,6 +46,11 @@ struct PanelView: View {
                 .allowsHitTesting(false)
 
             content
+                // §4.9a: a size change alters type and glyph sizes read from
+                // statics, which SwiftUI has no way to notice. Rebuilding the
+                // subtree is blunt but certain, and a size change is a rare,
+                // deliberate act rather than something on a hot path.
+                .id(model.panelSize)
             // During the collapse animation this is pinned to the final
             // width, so no layout happens while the window travels. The
             // window clips it, which is what makes it read as a drawer.
@@ -96,7 +101,7 @@ struct PanelView: View {
             Spacer(minLength: 0)
             Button(action: onToggleCollapse) {
                 Image(systemName: model.isCollapsed ? "chevron.left" : "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: PanelMetrics.chevronGlyph, weight: .semibold))
                     // White over the scrim, since the artwork behind it could
                     // be any colour; secondary is right against the panel.
                     .foregroundStyle(chevronForeground)
@@ -381,7 +386,7 @@ private struct NowPlayingLines: View {
             // wide the panel got.
             MarqueeText(
                 text: track?.name ?? "Nothing playing",
-                font: .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
+                font: .systemFont(ofSize: PanelMetrics.titleFont, weight: .semibold),
                 colour: track == nil ? .secondaryLabelColor : .labelColor
             )
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -389,7 +394,7 @@ private struct NowPlayingLines: View {
 
             MarqueeText(
                 text: subtitle,
-                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                font: .systemFont(ofSize: PanelMetrics.subtitleFont),
                 colour: .secondaryLabelColor
             )
             .frame(maxWidth: .infinity, alignment: .leading)

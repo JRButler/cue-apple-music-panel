@@ -78,7 +78,7 @@ private struct StateGlyph: View {
                     // 16 was the point it became legible, and 18 sits better
                     // beside the enlarged transport glyphs. Still well inside
                     // the 30 pt target, so the row does not grow.
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.system(size: PanelMetrics.shuffleRepeatGlyph, weight: .medium))
                     .foregroundStyle(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
             }
             .frame(width: target, height: target)
@@ -105,7 +105,7 @@ struct FavouriteButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: isFavourite ? "star.fill" : "star")
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(size: PanelMetrics.favouriteGlyph, weight: .medium))
                 .foregroundStyle(isFavourite ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                 .frame(width: 24, height: 24)
                 .background(

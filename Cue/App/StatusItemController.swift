@@ -24,21 +24,28 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let isAlwaysOnTop: () -> Bool
     private let setAlwaysOnTop: (Bool) -> Void
 
+    /// §4.9a. Same arrangement as Always on Top: the panel owns the state and
+    /// the menu only reflects and changes it.
+    private let setPanelSize: (PanelSize) -> Void
+
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "nz.slstudio.Cue",
                                 category: "StatusItem")
 
     private var alwaysOnTopItem: NSMenuItem?
     private var launchAtLoginItem: NSMenuItem?
+    private var sizeItems: [PanelSize: NSMenuItem] = [:]
 
     init(
         togglePanel: @escaping () -> Void,
         isAlwaysOnTop: @escaping () -> Bool,
         setAlwaysOnTop: @escaping (Bool) -> Void,
+        setPanelSize: @escaping (PanelSize) -> Void,
         quit: @escaping () -> Void
     ) {
         self.togglePanel = togglePanel
         self.isAlwaysOnTop = isAlwaysOnTop
         self.setAlwaysOnTop = setAlwaysOnTop
+        self.setPanelSize = setPanelSize
         self.quitApp = quit
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
@@ -67,6 +74,22 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             keyEquivalent: ""
         )
 
+        // §4.9a. A submenu rather than three more top-level items: the menu
+        // is deliberately short, and size is one decision, not three toggles.
+        let sizeParent = menu.addItem(withTitle: "Panel Size", action: nil, keyEquivalent: "")
+        let sizeMenu = NSMenu()
+        for size in PanelSize.allCases {
+            let item = sizeMenu.addItem(
+                withTitle: size.title,
+                action: #selector(choosePanelSize(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = size.rawValue
+            sizeItems[size] = item
+        }
+        menu.setSubmenu(sizeMenu, for: sizeParent)
+
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Cue", action: #selector(terminate), keyEquivalent: "q")
 
@@ -82,6 +105,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         alwaysOnTopItem?.state = isAlwaysOnTop() ? .on : .off
         launchAtLoginItem?.state = Self.launchesAtLogin ? .on : .off
+
+        let current = PanelMetrics.size
+        for (size, item) in sizeItems {
+            item.state = size == current ? .on : .off
+        }
     }
 
     // MARK: - Actions
@@ -91,6 +119,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func toggleAlwaysOnTop() {
         setAlwaysOnTop(!isAlwaysOnTop())
+    }
+
+    @objc private func choosePanelSize(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let size = PanelSize(rawValue: raw) else { return }
+        setPanelSize(size)
     }
 
     @objc private func toggleLaunchAtLogin() {
