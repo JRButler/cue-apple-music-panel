@@ -262,6 +262,8 @@ Interaction:
 - Click anywhere on the bar to seek there.
 - Drag the thumb to scrub. While dragging, show a time bubble above the thumb with the target time. **Commit the seek only on release** (one `set player position`). Suppress clock updates during the drag so the thumb doesn't jump.
 - Hit target: at least a 20 pt tall interactive area, even if the visible track is thinner. Fixing fiddly controls is the point of the app.
+  **Stated at Medium.** §4.9a scales the panel, and at Small this is 18.7 pt.
+  See §4.4 for why that is a change of mind rather than a breach.
 - Keyboard (when the panel is key): ← / → seek ±5 s, ⇧← / ⇧→ seek ±30 s.
 - For streaming tracks where the duration is 0 or missing, show an indeterminate bar and disable seeking.
   **Only when a track actually exists.** "No duration" covers two different
@@ -331,7 +333,18 @@ Interaction:
 
 ### 4.4 Transport ✅ confirmed
 - Layout: **previous · play/pause · next** as a centred group, with play/pause visibly larger than the buttons either side.
-- Hit targets: at least 32 pt for previous and next, and at least 44 pt for play/pause.
+- Hit targets: at least 32 pt for previous and next, and at least 44 pt for
+  play/pause — **at Medium**, which §4.9a makes the default rather than the
+  minimum. At Small they are 27 and 37.
+
+  These numbers were inherited, not measured. **44 pt is Apple's *touch*
+  target**, specified for a fingertip on iOS. Cue is pointer-driven on a Mac,
+  where the HIG sets nothing comparable and ordinary controls sit at 20–28 pt,
+  so a 37 pt play button is still generous. Amended knowingly in §4.9a rather
+  than breached quietly, and Medium still meets the original figure exactly —
+  so if Cue ever runs on a Mac with a touchscreen, the touch-friendly
+  geometry is what it ships with and Small is an opt-in nobody using a finger
+  would choose.
   **The target and the glyph are separate budgets.** §4.4 governs the target —
   the frame plus its `contentShape` — and says nothing about the symbol drawn
   inside it. The first build left a 21 pt play glyph floating in its 46 pt
@@ -368,7 +381,9 @@ it is clicked.
 
 ### 4.6 Volume ✅ confirmed
 - A horizontal slider bound to Music's `sound volume` (0–100). This is Music's own level, not system volume.
-- **Decent width:** at least 160 pt in the compact layout. It grows with the panel and never shrinks to an icon-sized control. The interactive height is at least 20 pt, the same as the scrub bar.
+- **Decent width:** at least 160 pt in the compact layout (at Medium; §4.9a's
+  Small leaves roughly 161 pt, which is the least headroom of any figure here
+  and the one to check first if Small is ever taken lower). It grows with the panel and never shrinks to an icon-sized control. The interactive height is at least 20 pt, the same as the scrub bar.
 - Speaker icons sit at each end: low on the left, high on the right. Clicking the low icon toggles mute, restoring the previous level.
 - Send updates while dragging at no more than 15 Hz, plus a final value on release.
 - Scrolling over the slider (trackpad or wheel) adjusts the volume in steps of 2.
@@ -459,6 +474,57 @@ Three proposed items were **dropped as scope** rather than deferred:
 Note that Launch at Login cannot be tested from a debug build in the build
 tree: `SMAppService` registers the bundle by path, so it must be verified from
 `/Applications` after §5b's pipeline has run.
+
+### 4.9a Panel size ✅ confirmed
+
+Small / Medium / Large, from a submenu in the status menu. Medium is the
+original geometry unchanged; the others are a plain multiplier on every length
+in `PanelMetrics`.
+
+| | scale | height | min width | transport | scrub bar |
+|---|---|---|---|---|---|
+| Small | 0.85 | 115 | 484 | 37.4 | 18.7 |
+| Medium | 1.00 | 135 | 569 | 44 | 22 |
+| Large | 1.15 | 155 | 654 | 50.6 | 25.3 |
+
+Added because the medium panel was tuned on a Mac Studio and is overbearing on
+a laptop. Small was confirmed there by eye at 0.85 before this was written down.
+
+One setting covers the expanded panel and the collapsed square together. Sizing
+them separately was considered and rejected: the artwork would change size as
+the drawer opened, which undoes §6.3's work on making the collapse read as one
+object moving.
+
+**Type scales with the box.** Eleven point sizes lived as literals across six
+views, and a smaller panel carrying full-size text does not read as small, it
+reads as broken. They are in `PanelMetrics` now too. The two genuinely prose
+fonts — the scrub bar's tooltip caption and §5's placeholder messages — keep
+their semantic sizes and follow the system text size, as they should.
+
+**`PanelMetrics` is plain statics, which `@Observable` cannot see.** Nothing
+would have invalidated the views reading type and glyph sizes from it, so
+`PlayerModel.panelSize` mirrors the setting purely as something observable and
+`PanelView` keys its content off it. Blunt — it rebuilds the subtree — but a
+size change is rare and deliberate, unlike anything on §7.1's hot path.
+
+**The window does not resize itself.** `windowWillResize` only clamps resizes
+the *user* starts, so `PanelController.setSize` applies the new height
+explicitly, scales the width in proportion rather than snapping to a default,
+and scales the stored expanded width too — otherwise a panel collapsed across
+a size change reopens at the old scale's width. It holds the top-left corner
+still, on the theory that a panel parked against a screen edge should grow
+downward rather than wander.
+
+Small and Large are tunable without a rebuild, because the display they need to
+suit is rarely the one the build is made on. Restart Cue after changing one:
+
+```sh
+defaults write nz.slstudio.Cue PanelSmallScale 0.8
+defaults delete nz.slstudio.Cue PanelSmallScale
+```
+
+Medium is deliberately not tunable: it is the reference the other two are
+expressed against, and §4.6a's geometry was tuned by eye at exactly 1.0.
 
 ---
 
