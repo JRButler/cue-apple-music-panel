@@ -526,6 +526,53 @@ defaults delete nz.slstudio.Cue PanelSmallScale
 Medium is deliberately not tunable: it is the reference the other two are
 expressed against, and §4.6a's geometry was tuned by eye at exactly 1.0.
 
+### 4.10 Transport on the collapsed artwork ✅ confirmed
+
+Collapsed, the artwork square *is* the transport. Hovering the leading ~76%
+raises a scrim with play/pause on it; hovering the trailing ~24% raises the
+same scrim with the expand chevron on it. Clicking the leading region toggles
+playback. At rest the artwork is unobstructed.
+
+Added because collapsed was the state that most wanted transport and was the
+only one without any: playing or pausing meant expanding, clicking, and
+collapsing again. **It replaces §4.3's click-to-show-in-Music, collapsed
+only** — expanded, clicking the artwork still brings Music forward.
+
+The split needed no new geometry. `dragExclusionTrailing` already carved the
+chevron's lane out of the artwork's click region, and at
+`chevronLane + edgeInset` it is 24% of the square.
+
+**Four things that had to be right.**
+
+- **The overlay sits above the drag handle and declines hit testing.** Below
+  it, the handle dims the scrim; above it with hit testing on, no press ever
+  reaches the handle and both play/pause *and* §4.1's drag-to-move are lost.
+- **Hover is `HoverTracker`, never `.onHover`.** A view that declines hit
+  testing never receives `.onHover` at all. Separately, collapsing resizes the
+  panel under a pointer that has not moved, which generates no enter event —
+  the bug that originally forced an AppKit tracker for the chevron, and which
+  came straight back when the panel-wide tracker was removed.
+- **One scrim, not two.** Each control having its own left a visible strip of
+  undimmed artwork between them, because they are anchored to different things:
+  the chevron's is a rounded rectangle positioned against the *panel*, the play
+  half's is square-edged and inset within the *artwork*. They cannot be made to
+  meet. `ArtworkView` draws a single cover for both and swaps the glyph. It is
+  rounded to the artwork's own radius, since the clip above it has already been
+  applied.
+- **The chevron's collapsed padding was `edgeInset / 2`**, which pushed its lane
+  7.5 pt past the artwork's right edge, over the panel's margin. Invisible while
+  it carried its own scrim — and part of why the two never met. A full
+  `edgeInset` in both states now.
+
+Play/pause goes through `PlayerModel.togglePlayPause`, not a direct `playpause`,
+so §4.4's parked-player case is handled rather than silently doing nothing.
+
+**The chevron is invisible until the pointer is in its lane**, which was a
+deliberate call: revealing both glyphs on any panel hover was the alternative,
+and Julian judged the collapsed square small enough that anyone looking for a
+way to expand it will sweep across it. Noted because it is the one part of this
+that trades discoverability for a clean resting state.
+
 ---
 
 ## 5. States and errors

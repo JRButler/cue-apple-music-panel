@@ -27,7 +27,20 @@ struct ArtworkView: View {
     /// square including the chevron, so hovers never reached the chevron and
     /// clicks went to "open Music" instead of expanding.
     var dragExclusionTrailing: CGFloat = 0
+
+    /// §4.10. Collapsed, the artwork's leading region is play/pause rather
+    /// than a shortcut to Music: collapsed is the state where transport is
+    /// most wanted and, until now, the only one with none.
+    var showsPlayPause: Bool = false
+    var isPlaying: Bool = false
+    /// The chevron lives in `PanelView`, but its hover has to raise the same
+    /// scrim this view draws — see the overlay below for why there is only one.
+    var isHoveringChevron: Bool = false
+
     let onActivate: () -> Void
+
+    /// The pointer over the play region specifically, for the brighter scrim.
+    @State private var isHoveringPlay = false
 
     /// §4.3's floor, which the layout now comfortably exceeds.
     static let minimumSize: CGFloat = 64
@@ -62,13 +75,63 @@ struct ArtworkView: View {
         // §4.3: 150 ms crossfade.
         .animation(.easeInOut(duration: 0.15), value: trackKey)
         .contentShape(Rectangle())
-        // §4.3: clicking brings Music forward — and §4.1: dragging here moves
-        // the panel. See WindowDragging for why both need one gesture.
+        // §4.3: clicking brings Music forward — §4.10: or toggles playback
+        // when collapsed — and §4.1: dragging here moves the panel either way.
+        // See WindowDragging for why both need one gesture.
         .overlay(alignment: .leading) {
             WindowDragHandle(requiredClicks: 1, onClick: onActivate)
                 .frame(width: max(0, size - dragExclusionTrailing))
         }
-        .help("Click to show in Music, drag to move")
+        // §4.10's scrim and glyph, ABOVE the drag handle so it is not dimmed
+        // by the artwork, and hit-testing disabled so the press still reaches
+        // the handle underneath. Hover is tracked by HoverTracker rather than
+        // `.onHover`, which never fires on a view that declines hit testing.
+        // §4.10: ONE scrim over the whole square, raised by either control,
+        // carrying whichever glyph is active.
+        //
+        // Two adjacent scrims could not be made to meet. They are anchored to
+        // different things — the chevron's is a rounded rectangle positioned
+        // against the *panel*, overhanging the artwork's right edge, while the
+        // play half's is square-edged and inset within the artwork — so a
+        // strip of undimmed art always showed between them. A single cover has
+        // no seam to get wrong, and the glyph swaps instead of the backing.
+        //
+        // Rounded to the artwork's own radius: the clip above it has already
+        // been applied, so a plain rectangle would square off the corners.
+        .overlay {
+            if showsPlayPause {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(Color.black.opacity(0.42))
+                    .opacity(isHoveringPlay || isHoveringChevron ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.12), value: isHoveringPlay)
+                    .animation(.easeInOut(duration: 0.12), value: isHoveringChevron)
+                    .allowsHitTesting(false)
+            }
+        }
+        // Centred in the square for free, since the overlay spans the whole
+        // frame rather than the play region.
+        .overlay {
+            if showsPlayPause {
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: PanelMetrics.miniTransportGlyph, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .opacity(isHoveringPlay ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.12), value: isHoveringPlay)
+                    .allowsHitTesting(false)
+            }
+        }
+        // The tracker is a sibling of the scrim rather than inside it: the
+        // scrim spends most of its life at zero opacity, and tracking has to
+        // keep working while it is invisible.
+        .overlay(alignment: .leading) {
+            if showsPlayPause {
+                HoverTracker { isHoveringPlay = $0 }
+                    .frame(width: max(0, size - dragExclusionTrailing), height: size)
+                    .allowsHitTesting(false)
+            }
+        }
+        .help(showsPlayPause ? "Click to play or pause, drag to move"
+                             : "Click to show in Music, drag to move")
         .accessibilityLabel(image == nil ? "No artwork" : "Album artwork")
     }
 

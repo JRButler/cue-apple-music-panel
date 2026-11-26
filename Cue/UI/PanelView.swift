@@ -20,9 +20,9 @@ struct PanelView: View {
 
     /// The chevron itself, which drives its hover scrim in both states.
     @State private var isHoveringChevron = false
-    /// Anywhere over the panel. Only used collapsed, where it is what reveals
-    /// the chevron at all.
-    @State private var isHoveringPanel = false
+    // §4.10: there is no panel-wide hover state any more. Each half of the
+    // collapsed square answers to its own pointer, so the two scrims are never
+    // on screen at once and the seam between them cannot show.
 
     var body: some View {
         // Leading, not the default centre. While expanding, the content is
@@ -113,32 +113,29 @@ struct PanelView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .opacity(model.isCollapsed && !isHoveringPanel ? 0 : 1)
-            .animation(.easeInOut(duration: 0.15), value: isHoveringPanel)
+            .opacity(model.isCollapsed && !isHoveringChevron ? 0 : 1)
             .animation(.easeInOut(duration: 0.12), value: isHoveringChevron)
             .animation(.easeInOut(duration: 0.15), value: model.isCollapsed)
-            .onHover { isHoveringChevron = $0 }
+            // HoverTracker, not `.onHover`. Collapsing resizes the panel under
+            // a pointer that has not moved, which generates no enter event, so
+            // `.onHover` left the chevron hidden until the mouse left and came
+            // back. That bit once already when the panel-wide tracker was what
+            // revealed it.
+            .background(
+                HoverTracker { isHoveringChevron = $0 }
+                    .allowsHitTesting(false)
+            )
             .help(model.isCollapsed ? "Expand" : "Collapse to artwork")
             // Expanded, the chevron sits inside the panel's own margin rather
             // than against the window edge, so its hover scrim lines up with
             // the border the rest of the layout respects.
-            .padding(.trailing, model.isCollapsed
-                ? PanelMetrics.edgeInset / 2
-                : PanelMetrics.edgeInset)
+            // A full edgeInset in both states. Collapsed it was half that,
+            // which pushed the lane 7.5 pt past the artwork's right edge and
+            // sat the chevron partly over the panel's margin — invisible while
+            // it carried its own scrim, obvious once the scrim became the
+            // artwork's.
+            .padding(.trailing, PanelMetrics.edgeInset)
         }
-        // Collapsed, the whole square is the hover target, so the chevron
-        // appears whenever the pointer is anywhere over the panel.
-        //
-        // Tracked in AppKit rather than with `.onHover`, which misses the case
-        // that matters here: the panel resizing under a pointer that has not
-        // moved generates no enter event, so the chevron stayed hidden until
-        // the mouse left and came back.
-        .background(
-            HoverTracker { inside in
-                isHoveringPanel = inside
-            }
-            .allowsHitTesting(false)
-        )
     }
 
     /// Collapsed, white over a dark scrim, since the artwork behind could be
@@ -155,7 +152,10 @@ struct PanelView: View {
     /// and the standard hover fill over the panel.
     private var chevronScrim: AnyShapeStyle {
         if model.isCollapsed {
-            return AnyShapeStyle(Color.black.opacity(isHoveringChevron ? 0.42 : 0.3))
+            // §4.10: none of its own. ArtworkView draws a single scrim over
+            // the whole square for both controls, so a second one here would
+            // be the stacking that made the seam visible.
+            return AnyShapeStyle(Color.clear)
         }
         return isHoveringChevron ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear)
     }
@@ -221,7 +221,19 @@ struct PanelView: View {
                 dragExclusionTrailing: model.isCollapsed
                     ? PanelMetrics.chevronLane + PanelMetrics.edgeInset / 2
                     : 0,
-                onActivate: { model.activateMusic() }
+                showsPlayPause: model.isCollapsed,
+                isPlaying: model.playerState.isAdvancing,
+                isHoveringChevron: isHoveringChevron,
+                // §4.10: collapsed, the square is transport. §4.4's parked-player
+                // case is handled inside `togglePlayPause`, so this must go
+                // through the model rather than sending `playpause` itself.
+                onActivate: {
+                    if model.isCollapsed {
+                        Task { await model.togglePlayPause() }
+                    } else {
+                        model.activateMusic()
+                    }
+                }
             )
             // Reports where the square actually lands in the window, so the
             // margins can be read off rather than reasoned about.

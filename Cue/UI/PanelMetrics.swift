@@ -255,6 +255,9 @@ enum PanelMetrics {
     static var favouriteGlyph: CGFloat { 15 * scale }
     /// The collapse chevron.
     static var chevronGlyph: CGFloat { 11 * scale }
+    /// §4.10's play/pause over the collapsed artwork. Large because it has
+    /// the best part of the square to itself and nothing to compete with.
+    static var miniTransportGlyph: CGFloat { 26 * scale }
 
     /// §4.4's previous/next glyphs and their click target.
     static var transportSideGlyph: CGFloat { 19 * scale }
